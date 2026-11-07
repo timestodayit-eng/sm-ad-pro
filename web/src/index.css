@@ -1,0 +1,133 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource/noto-sans-bengali/400.css';
+@import '@fontsource/noto-sans-bengali/600.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens. Every colour in the UI comes from these variables, so light and dark mode
+ * are one switch, and the brand colour from Settings flows everywhere via --brand.
+ */
+:root {
+  --brand: #4f46e5;
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #f1f3f8;
+  --surface-3: #e8ebf3;
+  --border: #e3e6ee;
+  --border-strong: #cfd4e0;
+  --text: #121826;
+  --text-2: #4a5468;
+  --text-3: #7a8499;
+  --good: #0f9d58;
+  --good-bg: #e7f6ee;
+  --warn: #b26b00;
+  --warn-bg: #fff4e0;
+  --bad: #d93025;
+  --bad-bg: #fdecea;
+  --info: #1a73e8;
+  --info-bg: #e8f0fe;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 12px 32px rgb(16 24 40 / 0.12);
+}
+
+.dark {
+  --bg: #0b0f17;
+  --surface: #121826;
+  --surface-2: #182032;
+  --surface-3: #212b40;
+  --border: #243049;
+  --border-strong: #33415f;
+  --text: #e8ecf4;
+  --text-2: #aab3c5;
+  --text-3: #7c879d;
+  --good: #34c77b;
+  --good-bg: #0f2a1d;
+  --warn: #f2b14c;
+  --warn-bg: #2d2210;
+  --bad: #ff6b60;
+  --bad-bg: #331615;
+  --info: #6aa8ff;
+  --info-bg: #13233d;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px rgb(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', 'Noto Sans Bengali', ui-sans-serif, system-ui, sans-serif;
+  --color-brand: var(--brand);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+:lang(bn) body,
+.bn {
+  line-height: 1.65;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.brand-soft {
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+.brand-ring {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+@keyframes acc-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-in {
+  animation: acc-fade 0.18s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-in {
+    animation: none;
+  }
+}
