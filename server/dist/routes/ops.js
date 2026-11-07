@@ -7,7 +7,9 @@ import { AppError } from '../lib/errors.js';
 import { asyncHandler, idParam, parse } from '../lib/http.js';
 import { requirePermission } from '../auth/sessions.js';
 import { cancelJob, enqueue, QUEUES, retryJob } from '../jobs/queue.js';
-import { schedulerHealth, schedulerSchemaReady, tick } from '../jobs/scheduler.js';
+import { recordRefusedTick, schedulerHealth, schedulerSchemaReady, tick } from '../jobs/scheduler.js';
+import { db } from '../db/pool.js';
+import { schemaStatus } from '../db/migrations.js';
 import { audit } from '../services/audit.js';
 import { runHealthChecks } from '../services/health.js';
 export const opsRouter = Router();
@@ -91,13 +93,23 @@ opsRouter.post('/notifications/read-all', asyncHandler(async (req, res) => {
 }));
 /** External cron entry point. Bearer JOB_RUNNER_SECRET only; never reachable with a browser session. */
 export const internalRouter = Router();
+let lastUnauthorizedNote = 0;
 internalRouter.post('/tick', asyncHandler(async (req, res) => {
     const auth = req.get('authorization') ?? '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const src = (req.get('x-tick-source') ?? 'cron').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'cron';
     if (!token || !safeEqual(token, env().JOB_RUNNER_SECRET)) {
+        // At most once a minute, so a stranger hammering this URL cannot fill the table.
+        if (Date.now() - lastUnauthorizedNote > 60_000) {
+            lastUnauthorizedNote = Date.now();
+            await recordRefusedTick(src, 'unauthorized', `A ${src} tick was refused: the Authorization secret does not match JOB_RUNNER_SECRET.`);
+        }
         throw new AppError({ code: 'TICK_UNAUTHORIZED', message: 'Invalid scheduler secret.', status: 401, category: 'auth', hint: 'The cron job must send "Authorization: Bearer <JOB_RUNNER_SECRET>".' });
     }
     if (!(await schedulerSchemaReady())) {
+        const st = await schemaStatus(db()).catch(() => null);
+        if (st && st.current > 0)
+            await recordRefusedTick(src, 'schema_pending', `A ${src} tick was refused: the database upgrade is not complete (${st.failed.length ? `failed: ${st.failed.map((f) => f.version).join(', ')}` : `not applied: ${st.pending.map((p) => p.version).join(', ')}`}).`);
         throw new AppError({ code: 'SCHEMA_NOT_INSTALLED', message: 'The database is not installed or needs an upgrade.', status: 503, category: 'schema', hint: 'Open the panel and finish Setup, or apply pending upgrades in Settings → Database.' });
     }
     const source = parse(z.string().regex(/^[a-z0-9_-]{1,32}$/).default('cron'), req.get('x-tick-source') ?? undefined);

@@ -112,13 +112,32 @@ describe('scheduler tick (bugs 4, 5)', () => {
     expect(h.schema.upToDate).toBe(true);
   });
 
+  it('names a missing migration even when a later one is applied (gap in the history)', async () => {
+    await execute(`UPDATE schema_migrations SET status='pending_test' WHERE version=6`);
+    try {
+      const h = await schedulerHealth();
+      expect(h.schema).toMatchObject({ upToDate: false, current: h.schema.required, pending: [6] });
+      expect(h.warnings.join()).toContain('0006_dashboard_prefs has not been applied');
+    } finally {
+      await execute(`UPDATE schema_migrations SET status='applied' WHERE version=6`);
+    }
+  });
+
+  it('records a refused cron call with the reason', async () => {
+    const { recordRefusedTick } = await import('../src/jobs/scheduler.js');
+    await recordRefusedTick('hostinger', 'unauthorized', 'A hostinger tick was refused: the Authorization secret does not match JOB_RUNNER_SECRET.');
+    const h = await schedulerHealth();
+    expect(h.recentHeartbeats[0]).toMatchObject({ source: 'hostinger', skipped_reason: 'unauthorized' });
+    expect(h.lastError).toMatch(/does not match JOB_RUNNER_SECRET/);
+  });
+
   it('says when ticks wait for a database upgrade instead of only "stopped"', async () => {
     const top = await queryOne(`SELECT MAX(version) AS v FROM schema_migrations`);
     await execute(`UPDATE schema_migrations SET status='pending_test' WHERE version=?`, [top!.v]);
     try {
       const h = await schedulerHealth();
-      expect(h.schema).toEqual({ upToDate: false, current: Number(top!.v) - 1, required: Number(top!.v) });
-      expect(h.warnings.join()).toContain(`upgrade-from-schema-${Number(top!.v) - 1}-to-${top!.v}.sql`);
+      expect(h.schema).toMatchObject({ upToDate: false, current: Number(top!.v) - 1, required: Number(top!.v), pending: [Number(top!.v)] });
+      expect(h.warnings.join()).toMatch(/has not been applied/);
     } finally {
       await execute(`UPDATE schema_migrations SET status='applied' WHERE version=?`, [top!.v]);
     }

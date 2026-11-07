@@ -37,6 +37,10 @@ Restore the database backup and redeploy the previous release. Migrations are fo
 
 ## Release notes
 
+- **0.6.0** adds migration `0009_launches` (tables `launches`, `launch_items`, `meta_video_uploads` for Easy Ads). With phpMyAdmin, import `upgrade-from-schema-8-to-9.sql` (use the 7-, 6- … to-9 file if you skipped releases), or press **Apply pending migrations** in Settings → Database. Easy Ads needs the Meta login to have `ads_management` and `pages_show_list` (reconnect Meta from Ad Accounts if the Pages list is empty). Everything Easy Ads creates is PAUSED; switch ads on in Ads Manager.
+
+- **0.5.3** has no schema changes. Fixes the confusing "database is at version 8 but needs 8" message: when an earlier migration was skipped (for example only the 7-to-8 file was imported on a schema-6 database), Settings → Database, System Health and the banner now name the missing migration, and **Apply pending migrations** fills the gap. Refused cron calls (wrong secret, upgrade pending) now show in System Health → Recent ticks.
+
 - **0.5.2** has no schema changes. When the database is behind the code, background jobs pause on purpose; the banner and System Health now say so and name the upgrade file, instead of only "not running".
 
 - **0.5.1** adds migration `0008_account_funds` (balance, amount owed, payment method and a low-balance alert setting). With phpMyAdmin, import `upgrade-from-schema-7-to-8.sql` (use the 6-, 5- … to-8 file if you skipped releases). The **Balance** page fills in on the next sync of each account, within 15 minutes. Set the low-balance alert under **Settings → Cost alerts → Low balance (days)**.

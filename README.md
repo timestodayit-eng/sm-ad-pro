@@ -5,7 +5,7 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.5.2)
+## What works in this release (0.6.0)
 
 | Area | State |
 | --- | --- |
@@ -23,7 +23,9 @@ Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScrip
 | Working accounts chosen once in Settings, one shared account order (drag or paste a list) used on every page; account groups that open the dashboard and Campaigns; date filter (Today, Yesterday, Last 7/14/30 days, This/Last month, custom range, 90 days of history); sortable dashboard columns you can show, hide and reorder; Campaigns page across all working accounts; live dashboard with spend, results, CTR/CPC, running campaigns and ads, daily spend, ad thumbnails and Meta's own ad previews, synced every 15 minutes; leads, calls and messages per account and campaign; cost alerts with limits in Settings | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
 | Budgets page: change ad set daily budgets across working accounts in the account order (step up, same for all, or add to current), preview, explicit confirm, one-by-one writes read back from Meta, and a history of every change | Built, tested against recorded Meta responses; **not yet verified against a live Meta account** |
 | Balance page: prepaid funds, amount owed, spending limit left and days left at the last 7 days' spend for every working account, plus a low-balance alert | Built, tested against recorded Meta responses; **prepaid balance text not yet verified against a live Meta account** |
-| Pause/resume, publishing engine, Easy/Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
+| Easy Ads: the same video, caption and headline to the accounts (or group) you tick, in your account order, from one Facebook Page; lifetime budget (or daily) with start and end dates, running hours such as 07:00–22:00 in each account's time zone, fixed placements you tick (never Advantage+ placements), every Advantage+ creative change switched off; budget and age range per account (typed in, stepped 20, 22, 24 …, or from an uploaded CSV sheet); goal Call or Website; review with every problem named, explicit confirm; one campaign + one ad set + one ad per account, **all created PAUSED**; video uploaded to each account once and reused | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
+| Publishing page: live progress per account through the 7 steps, the real Meta IDs, the error Meta gave, Retry that checks Meta first so it never makes a duplicate, Cancel for rows not started | Built and tested |
+| Pause/resume, Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
 
 The panel never shows sample data. Pages for modules that are not built say so instead of showing fake numbers or buttons.
 

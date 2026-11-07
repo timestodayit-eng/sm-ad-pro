@@ -163,10 +163,14 @@ export async function schedulerHealth() {
     const since = st?.since_success != null ? Number(st.since_success) : null;
     const state = !st?.last_success_at ? 'never_started' : since > SCHEDULER_STALE_AFTER_SECONDS ? 'stale' : 'running';
     const ss = await schemaStatus(db());
-    const schema = { upToDate: ss.upToDate, current: ss.current, required: ss.required };
+    const schema = { upToDate: ss.upToDate, current: ss.current, required: ss.required, pending: ss.pending.map((p) => p.version), failed: ss.failed.map((f) => f.version) };
     const warnings = [];
-    if (!schema.upToDate)
-        warnings.push(`The database is at version ${schema.current} but this release needs ${schema.required}. Background jobs wait until the upgrade is applied (Settings → Database, or the upgrade-from-schema-${schema.current}-to-${schema.required}.sql file).`);
+    if (!schema.upToDate) {
+        if (ss.failed.length)
+            warnings.push(`Database migration ${ss.failed.map((f) => f.name).join(', ')} failed${ss.failed[0].error ? `: ${ss.failed[0].error.slice(0, 300)}` : ''}. Background jobs wait until it is fixed. See docs/UPGRADE.md, "Recovering from a failed migration".`);
+        if (ss.pending.length)
+            warnings.push(`Database ${ss.pending.length === 1 ? 'migration' : 'migrations'} ${ss.pending.map((p) => p.name).join(', ')} ${ss.pending.length === 1 ? 'has' : 'have'} not been applied. Background jobs wait until ${ss.pending.length === 1 ? 'it is' : 'they are'} applied: Settings → Database → Apply pending migrations.`);
+    }
     if (state === 'never_started')
         warnings.push('The scheduler has never completed a tick. Set up the cron job described in docs/SCHEDULER.md.');
     if (state === 'stale')
@@ -192,6 +196,7 @@ export async function schedulerHealth() {
     };
 }
 let loop = null;
+let lastRefusalNote = 0;
 /** Opportunistic in-process draining while the app is awake. Never the only trigger. */
 let schemaReady = false;
 /** True once the database schema is fully migrated. Cached after the first success so ticks stay cheap. */
@@ -199,6 +204,14 @@ export async function schedulerSchemaReady() {
     if (!schemaReady)
         schemaReady = (await schemaStatus(db())).upToDate;
     return schemaReady;
+}
+/**
+ * Records a tick that was turned away (wrong secret, database upgrade pending) so System Health can say why the
+ * scheduler stopped instead of only "no successful tick". Never throws.
+ */
+export async function recordRefusedTick(source, reason, message) {
+    await execute(`INSERT INTO scheduler_heartbeats (source, worker_id, started_at, finished_at, skipped_reason, error) VALUES (?, ?, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), ?, ?)`, [source.slice(0, 32), hostname().slice(0, 64), reason, message.slice(0, 1024)]).catch(() => undefined);
+    await execute(`UPDATE scheduler_state SET last_error=?, last_error_at=CURRENT_TIMESTAMP(3) WHERE id=1`, [message.slice(0, 1024)]).catch(() => undefined);
 }
 export function startInProcessLoop(intervalMs = 10_000) {
     if (loop)
@@ -210,8 +223,15 @@ export function startInProcessLoop(intervalMs = 10_000) {
         busy = true;
         try {
             // Before the Setup page installs the database there is nothing to run; stay quiet instead of logging errors.
-            if (!(await schedulerSchemaReady()))
+            if (!(await schedulerSchemaReady())) {
+                const st = await schemaStatus(db()).catch(() => null);
+                // Only once the database is installed: say an upgrade is pending, at most once a minute.
+                if (st && st.current > 0 && Date.now() - lastRefusalNote > 60_000) {
+                    lastRefusalNote = Date.now();
+                    await recordRefusedTick('in_process', 'schema_pending', `Waiting for the database upgrade (${st.failed.length ? `failed: ${st.failed.map((f) => f.version).join(', ')}` : `not applied: ${st.pending.map((p) => p.version).join(', ')}`}).`);
+                }
                 return;
+            }
             await tick('in_process', { budgetMs: 8_000 });
         }
         catch (err) {

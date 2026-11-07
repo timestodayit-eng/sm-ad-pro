@@ -45,9 +45,9 @@ export const NAV: NavGroup[] = [
   {
     label: 'grpCreate',
     items: [
-      { to: '/easy-ads', label: 'easyAds', icon: Sparkles, phase: 5, summary: 'Six-step builder: pick accounts, pick videos, set budgets (same, incremental or per account, ABO or CBO), review the full plan and potential spend, then create everything PAUSED.' },
+      { to: '/easy-ads', label: 'easyAds', icon: Sparkles },
       { to: '/advanced-ads', label: 'advancedAds', icon: SlidersHorizontal, phase: 5, summary: 'Every Marketing API control that the pinned API version supports, validated against Employment special-ad-category rules, with per-account overrides.' },
-      { to: '/publishing', label: 'publishing', icon: Rocket, phase: 3, summary: 'Live progress per account and per video (campaign, media, thumbnail, ad set, creative, ad), real Meta IDs, error codes, and safe recovery: resume, recheck, retry stage.' },
+      { to: '/publishing', label: 'publishing', icon: Rocket },
     ],
   },
   {

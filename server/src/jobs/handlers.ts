@@ -4,6 +4,7 @@ import { execute, query } from '../db/pool.js';
 import { inspectToken, decryptConnectionToken, syncConnection } from '../meta/connections.js';
 import { MetaApiError } from '../meta/graph.js';
 import { syncManagedAccounts } from '../meta/live.js';
+import { runLaunchItem } from '../services/launch.js';
 import { enqueue } from './queue.js';
 import { JobError, registerHandler } from './scheduler.js';
 
@@ -86,6 +87,9 @@ export function registerCoreHandlers() {
       }
     }
   });
+
+  /** Easy Ads: builds one account's campaign, ad set and ad (all PAUSED), one stage at a time. */
+  registerHandler('launch.item', (job, ctx) => runLaunchItem(job, ctx));
 
   registerHandler('maintenance.cleanup_sessions', async () => {
     await execute(`DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP(3)`);

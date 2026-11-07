@@ -12,6 +12,8 @@ import { CampaignsPage } from './pages/Campaigns';
 import { AccountGroupsPage } from './pages/Groups';
 import { LoginPage, SetupPage } from './pages/Auth';
 import { ComingSoonPage } from './pages/ComingSoon';
+import { EasyAdsPage } from './pages/EasyAds';
+import { PublishingPage } from './pages/Publishing';
 import { DashboardPage } from './pages/Dashboard';
 import { HealthPage } from './pages/Health';
 import { LiveAccountPage } from './pages/Live';
@@ -56,6 +58,8 @@ const BUILT: Record<string, ReactNode> = {
   '/accounts': <AccountsPage />,
   '/account-groups': <AccountGroupsPage />,
   '/campaigns': <CampaignsPage />,
+  '/easy-ads': <EasyAdsPage />,
+  '/publishing': <PublishingPage />,
   '/budgets': <BudgetsPage />,
   '/balance': <BalancePage />,
   '/notifications': <NotificationsPage />,

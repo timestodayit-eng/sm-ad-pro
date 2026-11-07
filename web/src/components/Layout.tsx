@@ -165,7 +165,9 @@ function SchedulerBanner() {
           <AlertTriangle className="size-4 text-warn" aria-hidden />
           <span className="font-medium text-ink">Background jobs are waiting for the database upgrade</span>
           <span className="text-ink-2">
-            The database is at version {s.schema.current}; this release needs {s.schema.required}. Apply it in Settings → Database, or import upgrade-from-schema-{s.schema.current}-to-{s.schema.required}.sql in phpMyAdmin.
+            {s.schema.failed?.length
+              ? `Database migration ${s.schema.failed.join(', ')} failed. Open Settings → Database for the error; see docs/UPGRADE.md to recover.`
+              : `Database migration${s.schema.pending?.length === 1 ? '' : 's'} ${(s.schema.pending ?? []).join(', ')} not applied yet. Press Settings → Database → Apply pending migrations.`}
           </span>
           {can('schema.migrate') && (
             <Link to="/settings" className="ml-auto font-medium text-brand hover:underline">Open Settings →</Link>
@@ -178,6 +180,9 @@ function SchedulerBanner() {
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-1">
         <AlertTriangle className="size-4 text-warn" aria-hidden />
         <span className="font-medium text-ink">{t('schedulerDown')}</span>
+        {s.lastError && s.lastErrorAt && (!s.lastSuccessAt || new Date(s.lastErrorAt) > new Date(s.lastSuccessAt)) && (
+          <span className="w-full text-ink-2 sm:order-last">Last problem ({new Date(s.lastErrorAt).toLocaleString()}): {s.lastError}</span>
+        )}
         <span className="text-ink-2">{s.state === 'never_started' ? 'The scheduler has never run. Sync, publishing and reports will not happen until the cron job is set up.' : `Last successful run was ${s.lastSuccessAt ? new Date(s.lastSuccessAt).toLocaleString() : 'unknown'}.`}</span>
         {can('health.read') && (
           <Link to="/health" className="ml-auto font-medium text-brand hover:underline">

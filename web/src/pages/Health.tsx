@@ -146,7 +146,7 @@ export function HealthPage() {
                             {h.jobs_claimed} claimed · {h.jobs_succeeded} ok · {h.jobs_failed} failed
                           </td>
                           <td className="px-3 py-2">
-                            {h.error ? <Badge tone="bad">Error</Badge> : h.skipped_reason ? <Badge tone="neutral">Skipped: another tick running</Badge> : h.finished_at ? <Badge tone="good">OK</Badge> : <Badge tone="warn">Running</Badge>}
+                            {h.skipped_reason === 'unauthorized' ? <span title={h.error}><Badge tone="bad">Refused: wrong secret</Badge></span> : h.skipped_reason === 'schema_pending' ? <span title={h.error}><Badge tone="warn">Waiting: database upgrade</Badge></span> : h.error ? <Badge tone="bad">Error</Badge> : h.skipped_reason ? <Badge tone="neutral">Skipped: another tick running</Badge> : h.finished_at ? <Badge tone="good">OK</Badge> : <Badge tone="warn">Running</Badge>}
                           </td>
                         </tr>
                       ))}

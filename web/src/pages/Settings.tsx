@@ -290,8 +290,13 @@ function DatabaseCard() {
         {q.error && <ErrorAlert error={q.error} />}
         {s && (
           <>
-            <Alert tone={s.upToDate ? 'good' : 'warn'} title={s.upToDate ? `Schema v${s.current} matches this build` : `Schema v${s.current}, this build needs v${s.required}`}>
-              {!s.upToDate && `${s.pending.length} pending migration(s). Publishing stays blocked until they are applied.`}
+            <Alert
+              tone={s.upToDate ? 'good' : s.failed.length ? 'bad' : 'warn'}
+              title={s.upToDate ? `Schema v${s.current} matches this build` : s.failed.length ? `Migration ${s.failed.map((f: any) => f.name).join(', ')} failed` : `${s.pending.length} migration${s.pending.length === 1 ? '' : 's'} not applied: ${s.pending.map((p: any) => p.name).join(', ')}`}
+            >
+              {!s.upToDate && (s.failed.length
+                ? <>{s.failed[0].error ?? 'No error was recorded.'} Background jobs and publishing wait until this is fixed. See docs/UPGRADE.md, “Recovering from a failed migration”.</>
+                : 'Background jobs and publishing wait until they are applied.')}
             </Alert>
             {!s.upToDate && (
               <Button onClick={() => run.mutate()} loading={run.isPending}>
@@ -309,6 +314,13 @@ function DatabaseCard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
+                  {s.pending.filter((p: any) => !s.history.some((h: any) => h.version === p.version)).map((p: any) => (
+                    <tr key={`p${p.version}`}>
+                      <td className="px-3 py-2 font-mono text-xs text-ink">{p.name}</td>
+                      <td className="px-3 py-2"><Badge tone="warn">not applied</Badge></td>
+                      <td className="px-3 py-2 text-ink-3">—</td>
+                    </tr>
+                  ))}
                   {s.history.map((h: any) => (
                     <tr key={h.version}>
                       <td className="px-3 py-2 font-mono text-xs text-ink">{h.name}</td>

@@ -124,6 +124,8 @@ describe('scheduler endpoint', () => {
     const res = await request(app).post('/internal/tick');
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('TICK_UNAUTHORIZED');
+    const hb = await queryOne(`SELECT source, skipped_reason FROM scheduler_heartbeats ORDER BY id DESC LIMIT 1`);
+    expect(hb).toMatchObject({ source: 'cron', skipped_reason: 'unauthorized' });
   });
 
   it('runs a tick with the secret and the dashboard shows the scheduler running', async () => {

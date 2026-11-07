@@ -1,0 +1,237 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createApp } from '../src/app.js';
+import { env } from '../src/config/env.js';
+import { execute, query, queryOne } from '../src/db/pool.js';
+import { registerCoreHandlers } from '../src/jobs/handlers.js';
+import { tick } from '../src/jobs/scheduler.js';
+import { encryptSecret, hashPassword } from '../src/lib/crypto.js';
+import { setFetchForTests } from '../src/meta/graph.js';
+import { localIso, normalizePhone, parseCsv, placementTargeting, sheetToRows } from '../src/services/launch.js';
+import { closePool, freshDb, signIn, TEST_ORIGIN } from './helpers.js';
+
+const ENV = {
+  META_APP_ID: '123', META_APP_SECRET: 'app-secret-for-tests', META_API_VERSION: 'v24.0', META_REDIRECT_URI: `${TEST_ORIGIN}/api/meta/callback`,
+  R2_ACCOUNT_ID: 'test', R2_BUCKET: 'b', R2_ACCESS_KEY_ID: 'test', R2_SECRET_ACCESS_KEY: 'test', R2_ENDPOINT: 'http://127.0.0.1:9', R2_PREFIX: 'coastal-media/',
+};
+
+describe('pure helpers', () => {
+  it('reads CSV with quotes, semicolons and a BOM', () => {
+    expect(parseCsv('﻿a,b\r\n"x, y","say ""hi"""\n')).toEqual([['a', 'b'], ['x, y', 'say "hi"']]);
+    expect(parseCsv('a;b\n1;2')).toEqual([['a', 'b'], ['1', '2']]);
+  });
+  it('accepts only full international phone numbers', () => {
+    expect(normalizePhone('+1 (555) 010-2000')).toBe('+15550102000');
+    expect(normalizePhone('555 010 2000')).toBeNull();
+  });
+  it('turns dates into the account’s own time zone and placements into Meta’s fields', () => {
+    expect(localIso('2026-11-20', '00:00', 'Asia/Dhaka')).toBe('2026-11-20T00:00:00+06:00');
+    expect(localIso('2026-07-04', '23:59', 'America/New_York')).toBe('2026-07-04T23:59:00-04:00');
+    expect(placementTargeting(['fb_feed', 'ig_reels', 'fb_reels'])).toEqual({ publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed', 'facebook_reels'], instagram_positions: ['reels'] });
+  });
+  it('matches sheet rows to accounts by short name, ID or full name', () => {
+    const accounts = [{ id: 1, account_id: '111', name: 'DadExpress DE 154' }, { id: 2, account_id: '222', name: 'DadExpress DE 1540' }, { id: 3, account_id: '333', name: 'Shop DE 168' }, { id: 4, account_id: '444', name: 'Other DE 168' }];
+    const out = sheetToRows('account,daily_budget,video\nDE 154,$20,\nact_222,22.5,clip\nDE 168,24,\nNope,1,\nShop DE 168,,missing.mp4\n', accounts, [], [{ id: 9, original_name: 'clip.mp4' }]);
+    expect(out.rows).toEqual([{ accountRowId: 1, dailyBudget: 20 }, { accountRowId: 2, dailyBudget: 22.5, mediaAssetId: 9 }, { accountRowId: 3 }]);
+    expect(out.errors).toEqual([
+      'Row 4: "DE 168" matches 2 accounts (Shop DE 168, Other DE 168). Use the full name or the account ID.',
+      'Row 5: "Nope" is not one of your working accounts.',
+      'Row 6: video "missing.mp4" is not in the media library.',
+    ]);
+  });
+});
+
+describe('Easy Ads launches, all PAUSED, in the account order', () => {
+  let app: ReturnType<typeof createApp>;
+  const pw = 'super admin password 1';
+  const acc: Record<string, number> = {};
+  let video = 0;
+  const calls: { method: string; path: string; params: Record<string, string> }[] = [];
+  const created: Record<string, { id: string; name: string; parent?: string }[]> = { campaigns: [], adsets: [], ads: [] };
+  let processingChecks = 0;
+  let timeoutOnAd = false;
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  let seq = 100;
+
+  beforeAll(async () => {
+    await freshDb(ENV);
+    registerCoreHandlers();
+    app = createApp();
+    const org = (await execute(`INSERT INTO orgs (name) VALUES ('O')`)).insertId;
+    const u = await execute(`INSERT INTO users (org_id, email, name, password_hash, role) VALUES (?,?,?,?, 'super_admin')`, [org, 'boss@example.test', 'Boss', await hashPassword(pw)]);
+    await execute(`INSERT INTO users (org_id, email, name, password_hash, role) VALUES (?,?,?,?, 'analyst')`, [org, 'analyst@example.test', 'An', await hashPassword(pw)]);
+    const c = (await execute(`INSERT INTO meta_connections (org_id, connected_by, meta_user_id, token_ciphertext, token_key_id, status) VALUES (?,?,?,?,?, 'active')`,
+      [org, u.insertId, 'mu1', encryptSecret('tok', env().TOKEN_ENCRYPTION_KEY), 'k1'])).insertId;
+    for (const [name, id, order] of [['DadExpress DE 168', '168', 1], ['DadExpress DE 154', '154', 2], ['DadExpress DE 179', '179', 3]] as const)
+      acc[name.slice(-6)] = (await execute(`INSERT INTO meta_ad_accounts (org_id, connection_id, account_id, name, currency, timezone_name, account_status, is_managed, display_order) VALUES (?,?,?,?, 'USD', 'Asia/Dhaka', 1, 1, ?)`, [org, c, id, name, order])).insertId;
+    await execute(`INSERT INTO meta_pages (org_id, connection_id, page_id, name, tasks) VALUES (?,?,?,?,?), (?,?,?,?,?)`, [org, c, '501', 'Page A', 'ADVERTISE,ANALYZE', org, c, '502', 'Page B', 'ADVERTISE']);
+    video = (await execute(`INSERT INTO media_assets (org_id, kind, original_name, content_type, size_bytes, object_key, status, part_size, part_count) VALUES (?, 'video', 'promo.mp4', 'video/mp4', 1000, 'coastal-media/promo.mp4', 'ready', 1000, 1)`, [org])).insertId;
+
+    setFetchForTests(async (url: any, init: any) => {
+      const u = new URL(String(url));
+      const path = u.pathname.replace('/v24.0/', '');
+      const method = init?.method ?? 'GET';
+      const params = Object.fromEntries(method === 'GET' ? u.searchParams : new URLSearchParams(String(init.body)));
+      calls.push({ method, path, params });
+      const [first, edge] = path.split('/');
+      if (method === 'POST') {
+        if (edge === 'advideos') return json({ id: `v${++seq}` });
+        if (edge === 'adcreatives') return json({ id: `cr${++seq}` });
+        if (edge === 'ads' && timeoutOnAd) {
+          timeoutOnAd = false;
+          const id = `ad${++seq}`;
+          created.ads.push({ id, name: params.name, parent: params.adset_id });
+          throw new TypeError('socket hang up'); // Meta created it, but we never heard back
+        }
+        if (edge === 'campaigns' || edge === 'adsets' || edge === 'ads') {
+          const id = `${edge.slice(0, 2)}${++seq}`;
+          created[edge].push({ id, name: params.name, parent: params.campaign_id ?? params.adset_id ?? first });
+          return json({ id });
+        }
+      }
+      if (edge === 'thumbnails') return json({ data: [{ uri: 'https://scontent.example/t1.jpg', is_preferred: false }, { uri: 'https://scontent.example/t2.jpg', is_preferred: true }] });
+      if (edge === 'campaigns' || edge === 'adsets' || edge === 'ads') return json({ data: created[edge].filter((x) => x.parent === first || first.startsWith('act_')) });
+      if (first.startsWith('v') && params.fields === 'status') return json({ status: { video_status: ++processingChecks < 2 ? 'processing' : 'ready' } });
+      if (first.startsWith('ad')) return json({ id: first, status: 'PAUSED', effective_status: 'PAUSED' });
+      return json({ error: { message: `unexpected ${method} ${path}`, code: 100 } }, 400);
+    });
+  });
+  afterAll(async () => {
+    setFetchForTests((...a) => fetch(...a));
+    await closePool();
+  });
+
+  const base = () => ({
+    name: 'Spring promo', goal: 'call', optimize: 'calls', mediaAssetId: video, caption: 'Call us today', title: 'Fast delivery', link: '+1 555 010 2000',
+    countries: ['US'], ageMin: 21, ageMax: 60, budget: { kind: 'lifetime', mode: 'stepped', start: 20, step: 2 },
+    startDate: '2099-01-10', endDate: '2099-01-20', hours: { from: '07:00', to: '22:00' }, placements: ['fb_feed', 'ig_reels'],
+    rows: [{ accountRowId: acc['DE 179'], pageId: '502' }, { accountRowId: acc['DE 168'] }, { accountRowId: acc['DE 154'] }],
+  });
+  /** Runs scheduler ticks until no launch job is waiting (video processing reschedules are made due at once). */
+  async function drain() {
+    for (let i = 0; i < 20; i++) {
+      await execute(`UPDATE jobs SET run_after=CURRENT_TIMESTAMP(3) - INTERVAL 1 SECOND WHERE status='queued' AND type='launch.item'`);
+      const r = await tick('test', { budgetMs: 10_000 });
+      if (!r.claimed) return;
+    }
+  }
+
+  it('plans stepped budgets in the account order and lists what is missing', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const plan = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(base())).body;
+    expect(plan.rows.map((r: any) => [r.accountName, r.position, r.budget, r.pageName, r.link])).toEqual([
+      ['DadExpress DE 168', 1, 20, null, '+15550102000'],
+      ['DadExpress DE 154', 2, 22, null, '+15550102000'],
+      ['DadExpress DE 179', 3, 24, 'Page B', '+15550102000'],
+    ]);
+    expect(plan.rows[1].issues).toEqual(['Choose a Facebook Page.']);
+    // one Page for the whole launch; a row can still name its own
+    const onePage = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), pageId: '501' })).body;
+    expect(onePage.rows.map((r: any) => r.pageName)).toEqual(['Page A', 'Page A', 'Page B']);
+    expect(onePage.ready).toBe(true);
+    const setup = (await agent.get('/api/launch/setup')).body;
+    expect(setup.pages.map((p: any) => p.name)).toEqual(['Page A', 'Page B']);
+    expect(plan.ready).toBe(false);
+    expect(plan.totals).toEqual([{ currency: 'USD', total: 66 }]);
+    expect(plan.days).toBe(10);
+    const bad = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), pageId: '501', endDate: '2099-01-10', hours: { from: '22:00', to: '07:00' } })).body;
+    expect(bad.problems).toEqual(['The end date must be after the start date.', 'The end hour must be after the start hour.']);
+    expect(bad.ready).toBe(false);
+
+    const refused = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), confirm: true });
+    expect(refused.status).toBe(400);
+    expect(calls).toEqual([]); // planning never calls Meta
+  });
+
+  it('reads an uploaded sheet: per-account budgets, captions and Pages', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const tpl = await agent.get('/api/launch/sheet-template.csv');
+    expect(tpl.text.split('\r\n')[0]).toBe('\uFEFFaccount,budget,age_min,age_max,page,video,caption,title,phone_or_website');
+    expect(tpl.text).toContain('DadExpress DE 168');
+    const sheet = (await agent.post('/api/launch/sheet').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ csv: 'account,page,budget,caption,age_min,age_max\nDE 154,Page A,30,Hello 154,25,45\nDE 168,,,,,\n' })).body;
+    expect(sheet.errors).toEqual([]);
+    expect(sheet.rows).toEqual([{ accountRowId: acc['DE 154'], pageId: '501', dailyBudget: 30, caption: 'Hello 154', ageMin: 25, ageMax: 45 }, { accountRowId: acc['DE 168'] }]);
+  });
+
+  it('only roles that may publish can launch', async () => {
+    const { agent, csrf } = await signIn(app, 'analyst@example.test', pw);
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), confirm: true });
+    expect(res.status).toBe(403);
+  });
+
+  it('creates campaign, ad set and ad PAUSED in every account, and stores the real IDs', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const body = { ...base(), pageId: '501', rows: [{ accountRowId: acc['DE 179'], pageId: '502', ageMin: 30, ageMax: 50 }, { accountRowId: acc['DE 168'] }, { accountRowId: acc['DE 154'] }] };
+    expect((await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(body)).status).toBe(400); // no confirm
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, confirm: true });
+    expect(res.status).toBe(201);
+    await drain();
+
+    const l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(l.items.map((i: any) => [i.accountName, i.budget, i.budgetKind, i.status, i.adStatus])).toEqual([
+      ['DadExpress DE 168', 20, 'lifetime', 'done', 'PAUSED'],
+      ['DadExpress DE 154', 22, 'lifetime', 'done', 'PAUSED'],
+      ['DadExpress DE 179', 24, 'lifetime', 'done', 'PAUSED'],
+    ]);
+    expect(l.items.every((i: any) => i.campaignId && i.adsetId && i.creativeId && i.adId && i.videoId)).toBe(true);
+
+    const posts = calls.filter((c) => c.method === 'POST');
+    // the first account is built first
+    expect(posts[0].path).toBe('act_168/advideos');
+    const camps = posts.filter((c) => c.path.endsWith('/campaigns'));
+    expect(camps.map((c) => [c.params.status, c.params.objective, c.params.special_ad_categories, c.params.is_adset_budget_sharing_enabled])).toEqual(Array(3).fill(['PAUSED', 'OUTCOME_ENGAGEMENT', '[]', 'false']));
+    const sets = posts.filter((c) => c.path.endsWith('/adsets'));
+    // an account still waiting for Meta to process its video does not hold up the others
+    expect(sets.map((c) => [c.path, c.params.lifetime_budget]).sort()).toEqual([['act_154/adsets', '2200'], ['act_168/adsets', '2000'], ['act_179/adsets', '2400']]);
+    expect(sets.every((c) => c.params.daily_budget === undefined)).toBe(true);
+    const first = sets.find((c) => c.path === 'act_168/adsets')!.params;
+    // dates in the account's zone (Asia/Dhaka), hours 7:00–22:00 every day, fixed placements, no Advantage+ placements
+    expect(first.start_time).toBe('2099-01-10T00:00:00+06:00');
+    expect(first.end_time).toBe('2099-01-20T23:59:00+06:00');
+    expect(first.pacing_type).toBe('["day_parting"]');
+    expect(JSON.parse(first.adset_schedule)).toEqual([{ start_minute: 420, end_minute: 1320, days: [0, 1, 2, 3, 4, 5, 6], timezone_type: 'ADVERTISER' }]);
+    expect(sets.find((c) => c.path === 'act_168/adsets')!.params).toMatchObject({ status: 'PAUSED', optimization_goal: 'QUALITY_CALL', destination_type: 'PHONE_CALL', billing_event: 'IMPRESSIONS', promoted_object: '{"page_id":"501"}' });
+    expect(JSON.parse(first.targeting)).toEqual({ geo_locations: { countries: ['US'] }, age_min: 21, age_max: 60, targeting_automation: { advantage_audience: 0 }, publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed'], instagram_positions: ['reels'] });
+    // the same ad everywhere; only budget and age range differ per account
+    expect(JSON.parse(sets.find((c) => c.path === 'act_179/adsets')!.params.targeting)).toMatchObject({ age_min: 30, age_max: 50 });
+    const crPost = posts.find((c) => c.path === 'act_179/adcreatives')!;
+    const cr = JSON.parse(crPost.params.object_story_spec);
+    // every Advantage+ creative feature is opted out
+    const dof = JSON.parse(crPost.params.degrees_of_freedom_spec).creative_features_spec;
+    expect(dof.standard_enhancements).toEqual({ enroll_status: 'OPT_OUT' });
+    expect(Object.values(dof).every((v: any) => v.enroll_status === 'OPT_OUT')).toBe(true);
+    expect(cr).toMatchObject({ page_id: '502', video_data: { image_url: 'https://scontent.example/t2.jpg', message: 'Call us today', title: 'Fast delivery', call_to_action: { type: 'CALL_NOW', value: { link: 'tel:+15550102000' } } } });
+    expect(posts.filter((c) => c.path.endsWith('/ads')).every((c) => c.params.status === 'PAUSED')).toBe(true);
+    // nothing anywhere asks Meta to switch something on
+    expect(posts.some((c) => c.params.status === 'ACTIVE')).toBe(false);
+    // the Page is remembered for next time
+    expect((await queryOne<any>(`SELECT page_id, phone_number FROM account_defaults WHERE ad_account_row_id=?`, [acc['DE 154']]))).toEqual({ page_id: '501', phone_number: '+15550102000' });
+  });
+
+  it('reuses an uploaded video, and a retry after an unanswered request does not create a duplicate ad', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    calls.length = 0;
+    timeoutOnAd = true;
+    const body = { ...base(), name: 'Second', goal: 'website', optimize: 'clicks', link: 'https://dadexpress.example/offer', cta: 'SHOP_NOW', pageId: '501', rows: [{ accountRowId: acc['DE 168'] }] };
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, confirm: true });
+    await drain();
+    expect(calls.some((c) => c.path.endsWith('/advideos'))).toBe(false); // same video, same account: reused
+    let l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(l.items[0]).toMatchObject({ status: 'needs_review', stage: 'ad', adId: null });
+    expect(l.items[0].error.hint).toMatch(/does not create a duplicate/);
+    const set = calls.find((c) => c.path.endsWith('/adsets'))!;
+    expect(set.params).toMatchObject({ optimization_goal: 'LINK_CLICKS', destination_type: 'WEBSITE' });
+    expect(set.params.promoted_object).toBeUndefined();
+    expect(JSON.parse(calls.find((c) => c.path.endsWith('/adcreatives'))!.params.object_story_spec).video_data.call_to_action).toEqual({ type: 'SHOP_NOW', value: { link: 'https://dadexpress.example/offer' } });
+
+    expect((await agent.post(`/api/launches/${res.body.id}/items/${l.items[0].id}/retry`).set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf)).status).toBe(200);
+    await drain();
+    l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(l.items[0]).toMatchObject({ status: 'done', adStatus: 'PAUSED' });
+    const mine = created.ads.filter((a) => a.name.includes(`[L${res.body.id}-1]`));
+    expect(mine).toHaveLength(1); // found the ad Meta had created instead of making another
+    expect(l.items[0].adId).toBe(mine[0].id);
+    const list = (await agent.get('/api/launches')).body.items;
+    expect(list[0]).toMatchObject({ name: 'Second', items: 1, done: 1, failed: 0 });
+    expect((await query(`SELECT * FROM meta_video_uploads`)).length).toBe(3);
+  });
+});
