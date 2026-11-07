@@ -37,6 +37,8 @@ Restore the database backup and redeploy the previous release. Migrations are fo
 
 ## Release notes
 
+- **0.5.2** has no schema changes. When the database is behind the code, background jobs pause on purpose; the banner and System Health now say so and name the upgrade file, instead of only "not running".
+
 - **0.5.1** adds migration `0008_account_funds` (balance, amount owed, payment method and a low-balance alert setting). With phpMyAdmin, import `upgrade-from-schema-7-to-8.sql` (use the 6-, 5- … to-8 file if you skipped releases). The **Balance** page fills in on the next sync of each account, within 15 minutes. Set the low-balance alert under **Settings → Cost alerts → Low balance (days)**.
 
 - **0.5.0** adds migration `0007_budget_changes` (a history of every budget change). With phpMyAdmin, import `upgrade-from-schema-6-to-7.sql` (or `upgrade-from-schema-5-to-7.sql` if you skipped 0.4.2). The new **Budgets** page changes ad set daily budgets on Meta, so the Meta login needs the `ads_management` permission. Only Super Admin, Admin and Media Buyer can confirm a change.

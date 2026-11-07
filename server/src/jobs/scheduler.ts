@@ -200,6 +200,8 @@ export interface SchedulerHealth {
   warnings: string[];
   overdueAfterSeconds: number;
   staleAfterSeconds: number;
+  /** Ticks are refused while the database is behind the code; say so instead of only "stopped". */
+  schema: { upToDate: boolean; current: number; required: number };
 }
 
 /** What the Dashboard banner and System Health show. Distinguishes "never started" from "stopped". */
@@ -211,7 +213,10 @@ export async function schedulerHealth(): Promise<SchedulerHealth> {
   const q = await queueStats();
   const since = st?.since_success != null ? Number(st.since_success) : null;
   const state: SchedulerHealth['state'] = !st?.last_success_at ? 'never_started' : since! > SCHEDULER_STALE_AFTER_SECONDS ? 'stale' : 'running';
+  const ss = await schemaStatus(db());
+  const schema = { upToDate: ss.upToDate, current: ss.current, required: ss.required };
   const warnings: string[] = [];
+  if (!schema.upToDate) warnings.push(`The database is at version ${schema.current} but this release needs ${schema.required}. Background jobs wait until the upgrade is applied (Settings → Database, or the upgrade-from-schema-${schema.current}-to-${schema.required}.sql file).`);
   if (state === 'never_started') warnings.push('The scheduler has never completed a tick. Set up the cron job described in docs/SCHEDULER.md.');
   if (state === 'stale') warnings.push(`No successful scheduler tick for ${Math.round(since! / 60)} minutes. Background work (sync, publishing, reports) is not running.`);
   if (q.overdue > 0) warnings.push(`${q.overdue} job(s) are more than ${OVERDUE_AFTER_SECONDS / 60} minutes past their due time.`);
@@ -229,6 +234,7 @@ export async function schedulerHealth(): Promise<SchedulerHealth> {
     warnings,
     overdueAfterSeconds: OVERDUE_AFTER_SECONDS,
     staleAfterSeconds: SCHEDULER_STALE_AFTER_SECONDS,
+    schema,
   };
 }
 

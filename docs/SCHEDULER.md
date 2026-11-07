@@ -29,6 +29,7 @@ If the domain is on Cloudflare, a Worker with a `* * * * *` Cron Trigger can mak
 - **System Health → Scheduler** shows *Running* and "Last run Ns ago".
 - **Test the cron** on that card queues a small test job. If it completes without you pressing **Run now**, ticks are arriving. The "Recent ticks" table shows the source of each tick (`hostinger`, `cloudflare` or `in_process`).
 - If no tick has succeeded for 3 minutes the state turns *Stopped* and every page shows a banner.
+- After deploying a release with a database change, ticks wait (503 `SCHEMA_NOT_INSTALLED`) until the upgrade is applied. The banner then says "waiting for the database upgrade" and names the file to import, or use Settings → Database → Apply pending migrations.
 - Jobs more than 2 minutes past their due time are counted as *Overdue*.
 
 ## Responses from `/internal/tick`

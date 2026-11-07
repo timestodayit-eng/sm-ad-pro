@@ -162,7 +162,11 @@ export async function schedulerHealth() {
     const q = await queueStats();
     const since = st?.since_success != null ? Number(st.since_success) : null;
     const state = !st?.last_success_at ? 'never_started' : since > SCHEDULER_STALE_AFTER_SECONDS ? 'stale' : 'running';
+    const ss = await schemaStatus(db());
+    const schema = { upToDate: ss.upToDate, current: ss.current, required: ss.required };
     const warnings = [];
+    if (!schema.upToDate)
+        warnings.push(`The database is at version ${schema.current} but this release needs ${schema.required}. Background jobs wait until the upgrade is applied (Settings → Database, or the upgrade-from-schema-${schema.current}-to-${schema.required}.sql file).`);
     if (state === 'never_started')
         warnings.push('The scheduler has never completed a tick. Set up the cron job described in docs/SCHEDULER.md.');
     if (state === 'stale')
@@ -184,6 +188,7 @@ export async function schedulerHealth() {
         warnings,
         overdueAfterSeconds: OVERDUE_AFTER_SECONDS,
         staleAfterSeconds: SCHEDULER_STALE_AFTER_SECONDS,
+        schema,
     };
 }
 let loop = null;

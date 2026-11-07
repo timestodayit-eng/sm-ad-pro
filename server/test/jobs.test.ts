@@ -109,6 +109,19 @@ describe('scheduler tick (bugs 4, 5)', () => {
     expect(h.state).toBe('running');
     expect(h.lastSource).toBe('cron');
     expect(h.recentHeartbeats[0]).toMatchObject({ source: 'cron', jobs_claimed: 2 });
+    expect(h.schema.upToDate).toBe(true);
+  });
+
+  it('says when ticks wait for a database upgrade instead of only "stopped"', async () => {
+    const top = await queryOne(`SELECT MAX(version) AS v FROM schema_migrations`);
+    await execute(`UPDATE schema_migrations SET status='pending_test' WHERE version=?`, [top!.v]);
+    try {
+      const h = await schedulerHealth();
+      expect(h.schema).toEqual({ upToDate: false, current: Number(top!.v) - 1, required: Number(top!.v) });
+      expect(h.warnings.join()).toContain(`upgrade-from-schema-${Number(top!.v) - 1}-to-${top!.v}.sql`);
+    } finally {
+      await execute(`UPDATE schema_migrations SET status='applied' WHERE version=?`, [top!.v]);
+    }
   });
 
   it('only one tick runs at a time; the second is skipped, not doubled', async () => {

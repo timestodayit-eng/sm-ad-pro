@@ -157,7 +157,22 @@ function SchedulerBanner() {
   const { t } = useI18n();
   const q = useQuery({ queryKey: ['dashboard'], queryFn: () => get('/dashboard/summary'), refetchInterval: 60_000 });
   const s = q.data?.scheduler;
-  if (!s || s.state === 'running') return null;
+  if (!s || (s.state === 'running' && s.schema?.upToDate !== false)) return null;
+  if (s.schema && !s.schema.upToDate)
+    return (
+      <div className="border-b border-warn/30 bg-warn-bg px-4 py-2.5 text-sm sm:px-8">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-1">
+          <AlertTriangle className="size-4 text-warn" aria-hidden />
+          <span className="font-medium text-ink">Background jobs are waiting for the database upgrade</span>
+          <span className="text-ink-2">
+            The database is at version {s.schema.current}; this release needs {s.schema.required}. Apply it in Settings → Database, or import upgrade-from-schema-{s.schema.current}-to-{s.schema.required}.sql in phpMyAdmin.
+          </span>
+          {can('schema.migrate') && (
+            <Link to="/settings" className="ml-auto font-medium text-brand hover:underline">Open Settings →</Link>
+          )}
+        </div>
+      </div>
+    );
   return (
     <div className="border-b border-warn/30 bg-warn-bg px-4 py-2.5 text-sm sm:px-8">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-1">

@@ -5,7 +5,7 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.5.1)
+## What works in this release (0.5.2)
 
 | Area | State |
 | --- | --- |
