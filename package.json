@@ -1,0 +1,18 @@
+{
+  "name": "ads-command-center",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-powered multi-account Meta Ads Command Center",
+  "engines": { "node": ">=22" },
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "node server.js",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "migrate": "node server/dist/db/migrate-cli.js"
+  }
+}
