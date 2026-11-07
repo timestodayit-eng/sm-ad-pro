@@ -45,6 +45,22 @@ Restart the app, open **Ad Accounts** and press **Connect Meta**. After you appr
 accounts and Pages straight away and re-syncs every 5 minutes. Tokens are checked hourly; if one expires
 you get a notification to reconnect.
 
+## "Requires business_management permission"
+
+This means the login did not grant `business_management`. Facebook Login for Business only grants the permissions
+listed in the **configuration**, not what the panel asks for, so:
+
+1. App dashboard → **Use cases** (or App Review → Permissions and Features): make sure `business_management` is added to the app.
+   In development mode it works without review for people with a role on the app.
+2. Facebook Login for Business → **Configurations** → open the configuration whose ID is in `META_CONFIG_ID` → edit
+   **Permissions** → tick `business_management` (and the others listed in step 2) → save. If you create a new configuration
+   instead, put its new ID in `META_CONFIG_ID` and restart the app.
+3. Remove the old grant so Meta asks again: facebook.com → Settings → **Business integrations** → remove the app.
+4. In the panel press **Connect Meta** again and approve everything, including the businesses and ad accounts you want.
+
+Since 0.3.3 the panel still imports your ad accounts and Pages without this permission (only business names are missing)
+and shows which permissions are missing next to the Meta login.
+
 ## App review and access level
 
 While the app is in development mode only people with a role on the app can connect. Advanced Access for

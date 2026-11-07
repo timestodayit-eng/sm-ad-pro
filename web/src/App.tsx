@@ -10,6 +10,7 @@ import { LoginPage, SetupPage } from './pages/Auth';
 import { ComingSoonPage } from './pages/ComingSoon';
 import { DashboardPage } from './pages/Dashboard';
 import { HealthPage } from './pages/Health';
+import { LiveAccountPage } from './pages/Live';
 import { MediaPage } from './pages/Media';
 import { SecurityPage } from './pages/Security';
 import { NotificationsPage } from './pages/Notifications';
@@ -81,6 +82,7 @@ export function App() {
         <Route key={item.to} path={item.to} element={<Guard>{BUILT[item.to] ?? <ComingSoonPage item={item} />}</Guard>} />
       ))}
       <Route path="/security" element={<Guard><SecurityPage /></Guard>} />
+      <Route path="/live/:id" element={<Guard><LiveAccountPage /></Guard>} />
       <Route path="*" element={<Guard><NotFound /></Guard>} />
     </Routes>
   );

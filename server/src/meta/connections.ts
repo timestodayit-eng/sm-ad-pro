@@ -139,17 +139,39 @@ interface GraphAdAccount {
 }
 
 /** Imports every ad account and Page the connection can reach. No account-count limit (bug 14). */
-export async function syncConnection(connectionId: number): Promise<{ accounts: number; pages: number }> {
+export const MISSING_BUSINESS_MANAGEMENT =
+  'Imported without business names: this login did not grant business_management. Add business_management to your Facebook Login for Business configuration, then press Connect Meta again.';
+
+function isMissingPermission(err: unknown, scope: string): boolean {
+  return err instanceof MetaApiError && (err.meta.class === 'permission' || err.meta.code === 100) && `${err.message} ${err.meta.message ?? ''}`.includes(scope);
+}
+
+export async function syncConnection(connectionId: number): Promise<{ accounts: number; pages: number; warnings: string[] }> {
   const conn = await queryOne(`SELECT * FROM meta_connections WHERE id=?`, [connectionId]);
   if (!conn) throw errors.notFound('Meta connection');
   const token = decryptConnectionToken(conn);
+  const warnings: string[] = [];
   try {
-    const accounts = await graphPaged<GraphAdAccount>({
-      path: 'me/adaccounts',
-      params: { fields: 'account_id,name,currency,timezone_name,account_status,disable_reason,amount_spent,spend_cap,business{id,name}' },
-      accessToken: token,
-      operation: 'meta.list_ad_accounts',
-    });
+    const baseFields = 'account_id,name,currency,timezone_name,account_status,disable_reason,amount_spent,spend_cap';
+    let accounts: GraphAdAccount[];
+    try {
+      accounts = await graphPaged<GraphAdAccount>({
+        path: 'me/adaccounts',
+        params: { fields: `${baseFields},business{id,name}` },
+        accessToken: token,
+        operation: 'meta.list_ad_accounts',
+      });
+    } catch (err) {
+      // Without business_management Meta refuses the business{} field. Import the accounts anyway, without business names.
+      if (!isMissingPermission(err, 'business_management')) throw err;
+      warnings.push(MISSING_BUSINESS_MANAGEMENT);
+      accounts = await graphPaged<GraphAdAccount>({
+        path: 'me/adaccounts',
+        params: { fields: baseFields },
+        accessToken: token,
+        operation: 'meta.list_ad_accounts',
+      });
+    }
     for (const a of accounts) {
       await execute(
         `INSERT INTO meta_ad_accounts (org_id, connection_id, account_id, name, currency, timezone_name, account_status, disable_reason,
@@ -167,12 +189,18 @@ export async function syncConnection(connectionId: number): Promise<{ accounts: 
         ],
       );
     }
-    const pages = await graphPaged<any>({
-      path: 'me/accounts',
-      params: { fields: 'id,name,tasks,instagram_business_account{id,username}' },
-      accessToken: token,
-      operation: 'meta.list_pages',
-    });
+    let pages: any[] = [];
+    try {
+      pages = await graphPaged<any>({
+        path: 'me/accounts',
+        params: { fields: 'id,name,tasks,instagram_business_account{id,username}' },
+        accessToken: token,
+        operation: 'meta.list_pages',
+      });
+    } catch (err) {
+      if (!(err instanceof MetaApiError) || (err.meta.class !== 'permission' && err.meta.code !== 100)) throw err;
+      warnings.push(`Pages were not imported: ${err.message}`);
+    }
     for (const p of pages) {
       await execute(
         `INSERT INTO meta_pages (org_id, connection_id, page_id, name, ig_account_id, ig_username, tasks, last_synced_at)
@@ -182,8 +210,9 @@ export async function syncConnection(connectionId: number): Promise<{ accounts: 
         [conn.org_id, connectionId, p.id, p.name, p.instagram_business_account?.id ?? null, p.instagram_business_account?.username ?? null, (p.tasks ?? []).join(',')],
       );
     }
-    await execute(`UPDATE meta_connections SET status='active', last_checked_at=CURRENT_TIMESTAMP(3), last_error=NULL WHERE id=?`, [connectionId]);
-    return { accounts: accounts.length, pages: pages.length };
+    const warning = warnings.length ? warnings.join(' ').slice(0, 1000) : null;
+    await execute(`UPDATE meta_connections SET status='active', last_checked_at=CURRENT_TIMESTAMP(3), last_error=? WHERE id=?`, [warning, connectionId]);
+    return { accounts: accounts.length, pages: pages.length, warnings };
   } catch (err) {
     if (err instanceof MetaApiError) {
       const status = err.meta.class === 'auth' ? 'expired' : 'error';
@@ -194,9 +223,14 @@ export async function syncConnection(connectionId: number): Promise<{ accounts: 
 }
 
 export async function listConnections(orgId: number) {
-  return query(
+  const rows = await query<any>(
     `SELECT id, meta_user_id, meta_user_name, token_expires_at, scopes, status, last_checked_at, last_error, created_at
        FROM meta_connections WHERE org_id=? ORDER BY created_at`,
     [orgId],
   );
+  // Granted scopes come from debug_token at connect time; empty means we could not read them, so claim nothing.
+  return rows.map((r: any) => {
+    const granted = String(r.scopes ?? '').split(',').filter(Boolean);
+    return { ...r, missing_scopes: granted.length ? REQUESTED_SCOPES.filter((x) => !granted.includes(x)) : [] };
+  });
 }

@@ -28,7 +28,19 @@ const schema = z
     SESSION_TTL_HOURS: z.coerce.number().int().positive().default(72),
     TOKEN_ENCRYPTION_KEY: z
         .string()
-        .refine((v) => Buffer.from(v, 'base64').length === 32, 'must be 32 random bytes, base64-encoded'),
+        // Forgive common copy/paste slips: surrounding quotes or spaces, and a 64-character hex key.
+        .transform((v) => {
+        const t = v.trim().replace(/^['"]|['"]$/g, '').trim();
+        return /^[0-9a-fA-F]{64}$/.test(t) ? Buffer.from(t, 'hex').toString('base64') : t;
+    })
+        .superRefine((v, ctx) => {
+        const n = Buffer.from(v, 'base64').length;
+        if (n !== 32)
+            ctx.addIssue({
+                code: 'custom',
+                message: `must be 32 random bytes, base64-encoded (44 characters ending in "="); this value decodes to ${n} bytes. Generate one with: openssl rand -base64 32`,
+            });
+    }),
     TOKEN_ENCRYPTION_KEY_ID: z.string().min(1).max(16).default('k1'),
     SETUP_TOKEN: z.string().min(16).optional(),
     META_APP_ID: z.string().optional(),

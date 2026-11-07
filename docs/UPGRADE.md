@@ -31,6 +31,14 @@ Restore the database backup and redeploy the previous release. Migrations are fo
 
 ## Release notes
 
+- **0.4.1** adds migration `0005_lead_call_counts`. Leads, calls and messaging conversations are now counted for every account and campaign, and **Settings → Cost alerts** sets limits for daily spend and cost per lead, call, message or result (a default per currency, overridable per account). After applying it, the next sync re-reads the last 30 days so the new counts fill in.
+
+- **0.4.0** adds migration `0004_live_reporting` (managed-account flag, campaigns, ad sets, ads, daily insights, and a 15-minute sync schedule). After applying it, open **Ad Accounts**, turn **Dashboard** on for the accounts you manage, and the dashboard fills in within a minute or two. No account is managed until you choose it. The cron job must be running (docs/SCHEDULER.md) for numbers to stay fresh.
+
+- **0.3.3** has no schema changes. If a Meta login lacks `business_management`, ad accounts and Pages still import (without business names), and the Meta login row lists the missing permissions with the fix. See docs/META_SETUP.md.
+
+- **0.3.2** has no schema changes. A wrong or missing setting now shows a page naming the setting instead of a bare 503. `TOKEN_ENCRYPTION_KEY` also accepts a value wrapped in quotes or spaces, or a 64-character hex key.
+
 - **0.3.0** adds migration `0003_two_factor`. After you apply it, every Super Admin and Admin is taken to **Security** at their next page load and must set up two-step login with an authenticator app before using the panel. Schema upgrades stay reachable without it, so an upgrade can never lock everyone out. Save the recovery codes. If someone loses their phone, another Super Admin can reset it from Settings → Users.
 
 - **0.2.0** adds migration `0002_media` (media library table and a cleanup schedule). After deploying, apply it from Settings → Database. Add the R2 settings from docs/R2_SETUP.md, then run **Check storage connection** on the Media Library page.

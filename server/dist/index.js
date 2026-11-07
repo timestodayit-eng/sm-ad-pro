@@ -1,4 +1,7 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { env, EnvError, features } from './config/env.js';
+import { startConfigErrorServer } from './config-error-server.js';
 import { describeDbError, initPool, closePool, db } from './db/pool.js';
 import { schemaStatus } from './db/migrations.js';
 import { logger } from './lib/logger.js';
@@ -11,6 +14,16 @@ import { startInProcessLoop, stopInProcessLoop } from './jobs/scheduler.js';
  * but readiness reports 503 and publishing stays blocked.
  */
 async function main() {
+    // Hosting panels set variables directly. A .env file next to server.js is also read, without overriding them.
+    const dotenv = join(process.cwd(), '.env');
+    if (existsSync(dotenv)) {
+        try {
+            process.loadEnvFile(dotenv);
+        }
+        catch (err) {
+            console.error('[startup] could not read .env:', err.message);
+        }
+    }
     let e;
     try {
         e = env();
@@ -18,7 +31,9 @@ async function main() {
     catch (err) {
         if (err instanceof EnvError) {
             console.error(`[startup] ${err.message}\nSee .env.example and docs/DEPLOYMENT.md.`);
-            process.exit(1);
+            // Stay up and explain, instead of crash-looping behind a bare "503" from the host.
+            startConfigErrorServer(err.issues);
+            return;
         }
         throw err;
     }

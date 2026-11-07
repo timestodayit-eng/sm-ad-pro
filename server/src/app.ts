@@ -15,6 +15,7 @@ import { adminRouter } from './routes/admin.js';
 import { internalRouter, opsRouter } from './routes/ops.js';
 import { metaCallbackRouter, metaRouter } from './routes/meta.js';
 import { mediaRouter } from './routes/media.js';
+import { liveRouter } from './routes/live.js';
 import { securityRouter } from './routes/security.js';
 
 function webDist(): string | null {
@@ -42,6 +43,8 @@ export function createApp() {
           'font-src': ["'self'", 'data:'],
           'connect-src': ["'self'", storageOrigin],
           'frame-ancestors': ["'none'"],
+          // Meta's own ad previews are iframes served from facebook.com.
+          'frame-src': ['https://www.facebook.com', 'https://business.facebook.com'],
           'form-action': ["'self'", 'https://www.facebook.com'],
         },
       },
@@ -78,6 +81,7 @@ export function createApp() {
   api.use(opsRouter);
   api.use(metaRouter);
   api.use(mediaRouter);
+  api.use(liveRouter);
   api.use((req, _res, next) => next(new AppError({ code: 'API_ROUTE_NOT_FOUND', message: `No API route ${req.method} ${req.path}.`, status: 404, category: 'not_found' })));
   app.use('/api', api);
 

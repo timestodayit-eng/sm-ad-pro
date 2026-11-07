@@ -3,6 +3,8 @@ import { abortMultipart } from '../services/storage.js';
 import { execute, query } from '../db/pool.js';
 import { inspectToken, decryptConnectionToken, syncConnection } from '../meta/connections.js';
 import { MetaApiError } from '../meta/graph.js';
+import { syncManagedAccounts } from '../meta/live.js';
+import { enqueue } from './queue.js';
 import { JobError, registerHandler } from './scheduler.js';
 function metaFailure(err) {
     if (err instanceof MetaApiError) {
@@ -32,6 +34,30 @@ export function registerCoreHandlers() {
         }
         if (failures.length && failures.length === ids.length) {
             throw new JobError({ kind: 'transient', code: 'META_SYNC_ALL_FAILED', message: failures.join('; ').slice(0, 900) });
+        }
+    });
+    /** Every 15 minutes (and on demand): campaigns, ads and daily results for the accounts the panel manages. */
+    registerHandler('meta.sync_live', async (job) => {
+        if (!features().meta)
+            return;
+        const ids = Array.isArray(job.payload?.accountIds) ? job.payload.accountIds.map(Number).filter(Number.isFinite) : undefined;
+        if (!ids?.length) {
+            // The recurring run fans out to one short job per account, so a slow account never outlives its job lease
+            // and one failing account does not hold up the others.
+            const slot = Math.floor(Date.now() / 600_000);
+            const rows = await query(`SELECT a.id FROM meta_ad_accounts a JOIN meta_connections c ON c.id=a.connection_id
+          WHERE a.is_managed=1 AND a.is_enabled=1 AND c.status IN ('active','error')`);
+            for (const r of rows) {
+                await enqueue({ queue: 'sync', type: 'meta.sync_live', payload: { accountIds: [Number(r.id)] }, dedupeKey: `live:${r.id}:${slot}`, maxAttempts: 3, priority: 60 });
+            }
+            return;
+        }
+        const out = await syncManagedAccounts(ids);
+        // Rate limits and dead tokens: back off and retry the whole run later instead of hammering Meta.
+        if (out.stoppedBy)
+            throw metaFailure(out.stoppedBy);
+        if (out.failed.length && out.synced === 0) {
+            throw new JobError({ kind: 'transient', code: 'META_LIVE_SYNC_FAILED', message: out.failed.map((f) => `account ${f.id}: ${f.error}`).join('; ').slice(0, 900) });
         }
     });
     /** Hourly: check token validity and expiry so the UI can warn before publishing breaks. */

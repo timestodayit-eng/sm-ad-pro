@@ -59,7 +59,7 @@ metaRouter.post(
 );
 
 /** Which accounts may this user see? Admins and all-accounts users see the whole org. */
-function accountScope(u: Express.Request['user'] & {}) {
+export function accountScope(u: Express.Request['user'] & {}) {
   const all = u.allAccounts || ['super_admin', 'admin'].includes(u.role);
   return all
     ? { sql: 'a.org_id = ?', params: [u.orgId] as unknown[] }
@@ -70,6 +70,7 @@ function accountScope(u: Express.Request['user'] & {}) {
 const searchSchema = z.object({
   q: z.string().trim().max(190).optional(),
   status: z.enum(['all', 'active', 'inactive']).default('all'),
+  managed: z.enum(['all', 'managed', 'unmanaged']).default('all'),
   groupId: z.number().int().positive().optional(),
   brandId: z.number().int().positive().optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).optional(),
@@ -91,6 +92,8 @@ metaRouter.post(
       const like = `%${f.q.replace(/[%_]/g, '\\$&')}%`;
       params.push(like, like, like);
     }
+    if (f.managed === 'managed') where.push('a.is_managed = 1');
+    if (f.managed === 'unmanaged') where.push('a.is_managed = 0');
     if (f.status === 'active') where.push('a.account_status = 1');
     if (f.status === 'inactive') where.push('(a.account_status IS NULL OR a.account_status <> 1)');
     if (f.groupId) {
@@ -110,7 +113,7 @@ metaRouter.post(
     const order = f.sort === 'last_synced_at' ? 'a.last_synced_at DESC' : f.sort === 'currency' ? 'a.currency, a.name' : 'a.name';
     const rows = await query(
       `SELECT a.id, a.account_id, a.name, a.currency, a.timezone_name, a.account_status, a.disable_reason, a.amount_spent_minor, a.spend_cap_minor,
-              a.business_name, a.last_synced_at, a.last_sync_error, b.name AS brand_name,
+              a.business_name, a.last_synced_at, a.last_sync_error, a.is_managed, a.live_synced_at, a.live_sync_error, b.name AS brand_name,
               c.status AS connection_status, c.meta_user_name, d.page_id, d.phone_number, d.website_url
          FROM meta_ad_accounts a
          JOIN meta_connections c ON c.id = a.connection_id

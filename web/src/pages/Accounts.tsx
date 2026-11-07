@@ -1,9 +1,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, CheckSquare, ExternalLink, FolderPlus, Link2, RefreshCw, Search, Square, X } from 'lucide-react';
+import { Building2, CheckSquare, ExternalLink, Eye, EyeOff, FolderPlus, LayoutDashboard, Link2, RefreshCw, Search, Square, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Alert, Badge, Button, Card, CardHeader, Dot, EmptyState, ErrorAlert, Input, PageHeader, Segmented, Select, Skeleton, cx, timeAgo } from '../components/ui';
-import { get, post } from '../lib/api';
+import { get, post, put } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { usePageTitle, useSession } from '../lib/session';
 
@@ -20,6 +20,9 @@ interface Account {
   meta_user_name: string | null;
   page_id: string | null;
   brand_name: string | null;
+  is_managed: number;
+  live_synced_at: string | null;
+  live_sync_error: string | null;
   readiness: { level: 'ready' | 'warning' | 'blocked'; issues: string[] };
 }
 
@@ -35,6 +38,7 @@ export function AccountsPage() {
   const [debounced, setDebounced] = useState('');
   const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [currency, setCurrency] = useState('');
+  const [managed, setManaged] = useState<'all' | 'managed' | 'unmanaged'>(params.get('pick') ? 'unmanaged' : 'all');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [groupName, setGroupName] = useState('');
@@ -44,12 +48,12 @@ export function AccountsPage() {
     const id = setTimeout(() => setDebounced(q), 250);
     return () => clearTimeout(id);
   }, [q]);
-  useEffect(() => setPage(1), [debounced, status, currency]);
+  useEffect(() => setPage(1), [debounced, status, currency, managed]);
 
   const conns = useQuery({ queryKey: ['meta-connections'], queryFn: () => get('/meta/connections') });
   const list = useQuery({
-    queryKey: ['accounts', debounced, status, currency, page],
-    queryFn: () => post<{ items: Account[]; total: number }>('/accounts/search', { q: debounced || undefined, status, currency: currency || undefined, page, pageSize }),
+    queryKey: ['accounts', debounced, status, currency, managed, page],
+    queryFn: () => post<{ items: Account[]; total: number }>('/accounts/search', { q: debounced || undefined, status, managed, currency: currency || undefined, page, pageSize }),
     placeholderData: keepPreviousData,
   });
 
@@ -69,6 +73,15 @@ export function AccountsPage() {
       setSelected(new Set());
       setGroupName('');
       qc.invalidateQueries({ queryKey: ['account-groups'] });
+    },
+  });
+
+  const setManagedFor = useMutation({
+    mutationFn: (v: { ids: number[]; managed: boolean }) => put<{ updated: number; syncQueued: number }>('/accounts/managed', { accountIds: v.ids, managed: v.managed }),
+    onSuccess: (_r, v) => {
+      if (v.ids.length > 1) setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      qc.invalidateQueries({ queryKey: ['live'] });
     },
   });
 
@@ -137,7 +150,12 @@ export function AccountsPage() {
                 <Badge tone={c.status === 'active' ? 'good' : 'bad'}>{c.status}</Badge>
                 <span className="text-ink-3">Checked {timeAgo(c.last_checked_at)}</span>
                 {c.token_expires_at && <span className="text-ink-3">Token expires {new Date(c.token_expires_at).toLocaleDateString()}</span>}
-                {c.last_error && <span className="text-bad">{c.last_error}</span>}
+                {c.last_error && <span className={c.status === 'active' ? 'text-warn' : 'text-bad'}>{c.last_error}</span>}
+                {c.missing_scopes?.length > 0 && (
+                  <span className="basis-full text-warn">
+                    Missing permissions: {c.missing_scopes.join(', ')}. Add them to your Facebook Login for Business configuration in the Meta app, then press Connect Meta again. docs/META_SETUP.md shows where.
+                  </span>
+                )}
                 {can('accounts.manage') && (
                   <Button size="sm" variant="secondary" className="ml-auto" icon={<RefreshCw className="size-3.5" />} loading={sync.isPending && sync.variables === c.id} onClick={() => sync.mutate(c.id)}>
                     Sync now
@@ -149,12 +167,23 @@ export function AccountsPage() {
         </Card>
       )}
 
+      {total > 0 && (
+        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-line bg-surface-2 px-4 py-3 text-sm text-ink-2">
+          <LayoutDashboard className="mt-0.5 size-4 shrink-0 text-brand" />
+          <span>
+            Turn <strong className="text-ink">Dashboard</strong> on for the accounts you want to manage. Only those accounts are synced live
+            (spend, results, campaigns, ads) and shown on the dashboard. Tick several and use “Add to dashboard” to do many at once.
+          </span>
+        </div>
+      )}
+
       <Card className="mt-6">
         <div className="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <div className="relative min-w-56 flex-1">
             <Search className="pointer-events-none absolute top-3 left-3 size-4 text-ink-3" />
             <Input placeholder="Search by name, ID or business" className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
           </div>
+          <Segmented label="Dashboard" value={managed} onChange={setManaged} options={[{ value: 'all', label: 'All' }, { value: 'managed', label: 'On dashboard' }, { value: 'unmanaged', label: 'Not on dashboard' }]} />
           <Segmented label="Status" value={status} onChange={setStatus} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Not active' }]} />
           <Select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-32" aria-label="Currency">
             <option value="">All currencies</option>
@@ -167,6 +196,13 @@ export function AccountsPage() {
         {selected.size > 0 && can('accounts.manage') && (
           <div className="flex flex-wrap items-center gap-3 border-b border-line bg-surface-2 px-4 py-3 text-sm">
             <span className="font-medium text-ink">{selected.size} selected</span>
+            <Button size="sm" icon={<Eye className="size-4" />} loading={setManagedFor.isPending && setManagedFor.variables?.managed} onClick={() => setManagedFor.mutate({ ids: [...selected], managed: true })}>
+              Add to dashboard
+            </Button>
+            <Button size="sm" variant="secondary" icon={<EyeOff className="size-4" />} loading={setManagedFor.isPending && !setManagedFor.variables?.managed} onClick={() => setManagedFor.mutate({ ids: [...selected], managed: false })}>
+              Remove from dashboard
+            </Button>
+            <span className="h-5 w-px bg-line" aria-hidden />
             <Input placeholder="New group name" value={groupName} onChange={(e) => setGroupName(e.target.value)} className="h-9 w-56" />
             <Button size="sm" icon={<FolderPlus className="size-4" />} disabled={groupName.trim().length < 2} loading={makeGroup.isPending} onClick={() => makeGroup.mutate()}>
               Save as group
@@ -175,6 +211,7 @@ export function AccountsPage() {
               Clear
             </Button>
             {makeGroup.error && <span className="text-bad">{(makeGroup.error as Error).message}</span>}
+            {setManagedFor.error && <span className="text-bad">{(setManagedFor.error as Error).message}</span>}
             {makeGroup.isSuccess && <span className="text-good">Group saved</span>}
           </div>
         )}
@@ -215,6 +252,7 @@ export function AccountsPage() {
                     </button>
                   </th>
                   <th className="px-2 py-3">Account</th>
+                  <th className="px-2 py-3">Dashboard</th>
                   <th className="px-2 py-3">Status</th>
                   <th className="px-2 py-3">Currency</th>
                   <th className="px-2 py-3">Publishing readiness</th>
@@ -236,6 +274,22 @@ export function AccountsPage() {
                         act_{a.account_id}
                         {a.business_name ? ` · ${a.business_name}` : ''}
                       </div>
+                    </td>
+                    <td className="px-2 py-3">
+                      {can('accounts.manage') ? (
+                        <button
+                          className={cx('inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors', a.is_managed ? 'border-brand/40 bg-brand/10 text-brand' : 'border-line text-ink-3 hover:text-ink')}
+                          aria-pressed={!!a.is_managed}
+                          title={a.live_sync_error ?? (a.is_managed ? 'Shown on the dashboard and synced live. Click to remove.' : 'Click to show this account on the dashboard')}
+                          disabled={setManagedFor.isPending && setManagedFor.variables?.ids.length === 1 && setManagedFor.variables.ids[0] === a.id}
+                          onClick={() => setManagedFor.mutate({ ids: [a.id], managed: !a.is_managed })}
+                        >
+                          {a.is_managed ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+                          {a.is_managed ? 'On' : 'Off'}
+                        </button>
+                      ) : (
+                        <Badge tone={a.is_managed ? 'brand' : 'neutral'}>{a.is_managed ? 'On' : 'Off'}</Badge>
+                      )}
                     </td>
                     <td className="px-2 py-3">
                       <Badge tone={a.account_status === 1 ? 'good' : 'bad'}>{a.account_status != null ? STATUS[a.account_status] ?? `Status ${a.account_status}` : 'Unknown'}</Badge>

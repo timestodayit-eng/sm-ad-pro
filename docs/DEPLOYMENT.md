@@ -42,10 +42,15 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"  
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"      # TOKEN_ENCRYPTION_KEY
 ```
 
+No Node on your computer? Use hPanel → Advanced → SSH terminal (or any Mac/Linux terminal) and run
+`openssl rand -base64 32` for `TOKEN_ENCRYPTION_KEY` (44 characters ending in `=`) and `openssl rand -base64 48`
+for the other three. Paste the value without quotes or spaces.
+
 Keep a private copy of `TOKEN_ENCRYPTION_KEY`. Without it, stored Meta tokens cannot be decrypted.
 
-If a value is wrong the app refuses to start and the log names each bad key, for example
-`META_REDIRECT_URI: must be on APP_ORIGIN`.
+If a value is wrong the app does not start its main server. Instead the site shows a page listing each bad
+setting by name (never its value), `/healthz` returns 503 with the same list, and the log says the same thing, for
+example `META_REDIRECT_URI: must be on APP_ORIGIN`. Fix the value in hPanel and restart the app.
 
 ## 4. Start and run Setup
 
