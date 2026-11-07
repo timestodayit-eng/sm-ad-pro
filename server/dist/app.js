@@ -18,6 +18,7 @@ import { mediaRouter } from './routes/media.js';
 import { liveRouter } from './routes/live.js';
 import { budgetsRouter } from './routes/budgets.js';
 import { launchesRouter } from './routes/launches.js';
+import { aiRouter } from './routes/ai.js';
 import { securityRouter } from './routes/security.js';
 function webDist() {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ export function createApp() {
     api.use(liveRouter);
     api.use(budgetsRouter);
     api.use(launchesRouter);
+    api.use(aiRouter);
     api.use((req, _res, next) => next(new AppError({ code: 'API_ROUTE_NOT_FOUND', message: `No API route ${req.method} ${req.path}.`, status: 404, category: 'not_found' })));
     app.use('/api', api);
     const dist = webDist();

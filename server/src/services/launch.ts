@@ -44,7 +44,9 @@ export const DEFAULT_PLACEMENTS = ['fb_feed', 'fb_reels', 'ig_feed', 'ig_reels']
 const POSITION_FIELD = { facebook: 'facebook_positions', instagram: 'instagram_positions', messenger: 'messenger_positions', audience_network: 'audience_network_positions' } as const;
 
 /** Meta's Advantage+ creative features, all switched off so the ad runs exactly as uploaded. */
-export const CREATIVE_FEATURES_OFF = ['standard_enhancements', 'image_enhancement', 'image_brightness_and_contrast', 'image_templates', 'image_touchups', 'image_uncrop', 'text_optimizations', 'enhance_cta', 'video_auto_crop', 'inline_comment', 'product_extensions', 'site_extensions', 'add_text_overlay', 'adapt_to_placement', 'media_order', 'profile_card', 'text_generation', 'text_translation', 'video_filtering', 'image_animation', 'description_automation', 'media_type_automation'];
+export const CREATIVE_FEATURES_OFF = ['standard_enhancements', 'image_brightness_and_contrast', 'image_templates', 'image_touchups', 'image_uncrop', 'text_optimizations', 'enhance_cta', 'inline_comment', 'product_extensions', 'site_extensions', 'add_text_overlay', 'adapt_to_placement', 'description_automation', 'media_type_automation'];
+/** Tried in this order: every switch, then only the umbrella switch, then none (with a warning on the row). */
+export const CREATIVE_FEATURE_FALLBACKS: (string[] | null)[] = [CREATIVE_FEATURES_OFF, ['standard_enhancements'], null];
 
 export const WEBSITE_CTAS = ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'CONTACT_US', 'GET_QUOTE', 'APPLY_NOW', 'ORDER_NOW'] as const;
 const EU = new Set(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE']);
@@ -62,10 +64,46 @@ export const rowInput = z.object({
   link: text(1024).optional(),
   ageMin: z.number().int().min(18).max(65).optional(),
   ageMax: z.number().int().min(18).max(65).optional(),
+  /** Advanced Ads: this account's own custom audiences (IDs differ per ad account). */
+  customAudiences: z.object({ include: z.array(z.string().regex(/^\d+$/)).max(50).default([]), exclude: z.array(z.string().regex(/^\d+$/)).max(50).default([]) }).optional(),
 });
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-11-20.');
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 07:00.');
+
+const named = z.object({ key: z.string().min(1).max(64), name: text(200) });
+const place = named.extend({ type: z.enum(['country', 'region', 'city', 'zip', 'geo_market', 'electoral_district', 'subcity', 'neighborhood']).default('city'), countryCode: z.string().max(2).optional(), radius: z.number().min(1).max(80).optional() });
+
+/**
+ * Advanced Ads: everything Easy Ads leaves at Meta's default. All optional; a missing block means "as Easy Ads".
+ * Targeting IDs come from Meta's own search (GET /launch/search) so nothing is typed from memory.
+ */
+export const advancedInput = z.object({
+  bidStrategy: z.enum(['LOWEST_COST_WITHOUT_CAP', 'LOWEST_COST_WITH_BID_CAP', 'COST_CAP']).default('LOWEST_COST_WITHOUT_CAP'),
+  /** Bid cap or cost cap, in the account's currency (major units). */
+  bidAmount: money.optional(),
+  locations: z.object({
+    include: z.array(place).max(200).default([]),
+    exclude: z.array(place).max(200).default([]),
+    /** Who counts as "in" a place: people living there, recently there, or travelling there. */
+    types: z.array(z.enum(['home', 'recent', 'travel_in'])).max(3).default(['home', 'recent']),
+  }).default({ include: [], exclude: [], types: ['home', 'recent'] }),
+  interests: z.array(named).max(200).default([]),
+  behaviors: z.array(named).max(200).default([]),
+  excludedInterests: z.array(named).max(200).default([]),
+  locales: z.array(named).max(50).default([]),
+  devicePlatforms: z.array(z.enum(['mobile', 'desktop'])).max(2).default(['mobile', 'desktop']),
+  userOs: z.array(z.enum(['Android', 'iOS'])).max(2).default([]),
+  /** Days the running hours apply to, 0 = Sunday. Empty = every day. */
+  days: z.array(z.number().int().min(0).max(6)).max(7).default([]),
+  /** Link description shown under the headline. */
+  description: text(255).default(''),
+  /** Appended to the website link, for example utm_source=fb&utm_campaign={{campaign.name}}. */
+  urlTags: text(500).default(''),
+  /** true lets Meta apply Advantage+ creative enhancements. Easy Ads always switches them off. */
+  creativeEnhancements: z.boolean().default(false),
+});
+export type AdvancedInput = z.infer<typeof advancedInput>;
 
 export const launchInput = z.object({
   name: text(120).min(1, 'Give the launch a name.'),
@@ -101,6 +139,7 @@ export const launchInput = z.object({
   placements: z.array(z.string()).min(1, 'Tick at least one placement.').default(DEFAULT_PLACEMENTS),
   /** Accounts in this launch with anything that differs per account (from the table or an uploaded sheet). */
   rows: z.array(rowInput).min(1, 'Choose at least one account.').max(200),
+  advanced: advancedInput.optional(),
 });
 export type LaunchInput = z.infer<typeof launchInput>;
 
@@ -147,6 +186,7 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
     if (input.budget.kind !== 'lifetime') problems.push('Meta only allows running hours with a lifetime budget.');
     if (toMinute(input.hours.to) <= toMinute(input.hours.from)) problems.push('The end hour must be after the start hour.');
   }
+  problems.push(...advancedProblems(input));
 
   const ids = input.rows.map((r) => r.accountRowId);
   const defaults = ids.length ? await query<any>(`SELECT * FROM account_defaults WHERE ad_account_row_id IN (?)`, [ids]) : [];
@@ -228,13 +268,35 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
   };
 }
 
+/** What Meta refuses in Advanced Ads, named before anything is created. */
+export function advancedProblems(input: LaunchInput): string[] {
+  const a = input.advanced;
+  if (!a) return [];
+  const out: string[] = [];
+  if (a.bidStrategy !== 'LOWEST_COST_WITHOUT_CAP' && !(a.bidAmount && a.bidAmount > 0)) out.push(a.bidStrategy === 'COST_CAP' ? 'A cost cap needs an amount.' : 'A bid cap needs an amount.');
+  if (a.locations.types.length === 0) out.push('Choose at least one location type (living in, recently in, travelling in).');
+  if (a.devicePlatforms.length === 0) out.push('Choose at least one device type.');
+  if (a.locations.include.some((l) => l.type === 'country') && a.locations.include.some((l) => l.type !== 'country')) out.push('Mix countries with regions or cities only by typing the countries in the Countries box.');
+  if (input.specialCategory === 'EMPLOYMENT') {
+    if (a.excludedInterests.length) out.push('Job ads cannot exclude interests (Meta special ad category rule).');
+    if (a.locations.exclude.length) out.push('Job ads cannot exclude locations (Meta special ad category rule).');
+    const small = a.locations.include.find((l) => l.type === 'city' && (l.radius ?? 0) < 15);
+    if (small) out.push(`Job ads need a radius of at least 15 miles around ${small.name} (Meta special ad category rule).`);
+    if (a.locations.include.some((l) => l.type === 'zip')) out.push('Job ads cannot target postcodes (Meta special ad category rule).');
+  }
+  if (a.urlTags && /[?#]/.test(a.urlTags.charAt(0))) out.push('URL tags are written without the leading "?", for example utm_source=fb.');
+  if (a.locales.some((l) => !/^\d+$/.test(l.key))) out.push('Pick languages from the list; Meta needs its own language codes.');
+  return out;
+}
+
 /** Creates the launch and one queued job per account. Call only after planLaunch said ready. */
 export async function createLaunch(user: Express.Request['user'] & {}, input: LaunchInput, plan: Awaited<ReturnType<typeof planLaunch>>) {
   const settings = { ...input, rows: undefined };
   const res = await execute(`INSERT INTO launches (org_id, user_id, name, goal, settings) VALUES (?,?,?,?,?)`, [user.orgId, user.id, input.name, input.goal, JSON.stringify(settings)]);
   const launchId = res.insertId;
   for (const r of plan.rows) {
-    const content = { caption: r.caption, title: r.title, link: r.link, ageMin: r.ageMin, ageMax: r.ageMax };
+    const row = input.rows.find((x) => x.accountRowId === r.accountRowId);
+    const content = { caption: r.caption, title: r.title, link: r.link, ageMin: r.ageMin, ageMax: r.ageMax, ...(row?.customAudiences ? { customAudiences: row.customAudiences } : {}) };
     const item = await execute(
       `INSERT INTO launch_items (launch_id, org_id, ad_account_row_id, position, page_id, currency, budget_kind, budget_minor, media_asset_id, content)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
@@ -404,6 +466,23 @@ export function placementTargeting(keys: string[]) {
 }
 
 /** Everything Meta needs, built from a launch and one of its items. Exported for tests. */
+/** Meta's geo_locations block: countries from the Countries box plus the places picked from Meta's search. */
+export function geoLocations(countries: string[], places: { key: string; name: string; type: string; countryCode?: string; radius?: number }[], types?: string[]) {
+  const out: Record<string, unknown> = {};
+  const c = [...countries, ...places.filter((p) => p.type === 'country').map((p) => p.key)];
+  if (c.length) out.countries = [...new Set(c)];
+  const regions = places.filter((p) => p.type === 'region').map((p) => ({ key: p.key }));
+  if (regions.length) out.regions = regions;
+  const cities = places.filter((p) => p.type === 'city' || p.type === 'subcity' || p.type === 'neighborhood').map((p) => ({ key: p.key, ...(p.radius ? { radius: p.radius, distance_unit: 'mile' } : {}) }));
+  if (cities.length) out.cities = cities;
+  const zips = places.filter((p) => p.type === 'zip').map((p) => ({ key: p.key }));
+  if (zips.length) out.zips = zips;
+  const markets = places.filter((p) => p.type === 'geo_market').map((p) => ({ key: p.key }));
+  if (markets.length) out.geo_markets = markets;
+  if (types?.length && types.length < 3) out.location_types = types;
+  return out;
+}
+
 export function metaPayloads(launch: { id: number; name: string; settings: any }, item: any, account: { account_id: string; name: string; timezone_name?: string | null }) {
   const s = launch.settings;
   const g = (GOALS as any)[s.goal][s.optimize];
@@ -412,15 +491,31 @@ export function metaPayloads(launch: { id: number; name: string; settings: any }
   const lifetime = (item.budget_kind ?? s.budget?.kind) === 'lifetime';
   const budgetLabel = `${minorToMajor(item.budget_minor, item.currency)} ${item.currency}${lifetime ? '' : '/day'}`;
   const employment = s.specialCategory === 'EMPLOYMENT';
+  const adv: AdvancedInput | undefined = s.advanced;
   const targeting: Record<string, unknown> = {
-    geo_locations: { countries: s.countries },
+    geo_locations: geoLocations(s.countries, adv?.locations.include ?? [], adv?.locations.types),
     age_min: employment ? 18 : (content.ageMin ?? s.ageMin),
     age_max: employment ? 65 : (content.ageMax ?? s.ageMax),
     targeting_automation: { advantage_audience: s.advantageAudience ? 1 : 0 },
     ...placementTargeting(s.placements ?? DEFAULT_PLACEMENTS),
   };
   if (!employment && s.genders !== 'all') targeting.genders = [s.genders === 'male' ? 1 : 2];
+  if (adv) {
+    if (adv.locations.exclude.length) targeting.excluded_geo_locations = geoLocations([], adv.locations.exclude);
+    const spec: Record<string, unknown> = {};
+    if (adv.interests.length) spec.interests = adv.interests.map((x) => ({ id: x.key, name: x.name }));
+    if (adv.behaviors.length) spec.behaviors = adv.behaviors.map((x) => ({ id: x.key, name: x.name }));
+    if (Object.keys(spec).length) targeting.flexible_spec = [spec];
+    if (adv.excludedInterests.length) targeting.exclusions = { interests: adv.excludedInterests.map((x) => ({ id: x.key, name: x.name })) };
+    if (adv.locales.length) targeting.locales = adv.locales.map((x) => Number(x.key));
+    if (adv.devicePlatforms.length && adv.devicePlatforms.length < 2) targeting.device_platforms = adv.devicePlatforms;
+    if (adv.userOs.length) targeting.user_os = adv.userOs;
+  }
+  const ca = content.customAudiences;
+  if (ca?.include?.length) targeting.custom_audiences = ca.include.map((id: string) => ({ id }));
+  if (ca?.exclude?.length) targeting.excluded_custom_audiences = ca.exclude.map((id: string) => ({ id }));
   const reachesEu = (s.countries as string[]).some((c) => EU.has(c));
+  const scheduleDays = adv?.days?.length ? [...adv.days].sort() : [0, 1, 2, 3, 4, 5, 6];
 
   const campaign = {
     name: `${launch.name} · ${account.name} ${tag}`,
@@ -439,10 +534,11 @@ export function metaPayloads(launch: { id: number; name: string; settings: any }
     ...(s.startDate ? { start_time: localIso(s.startDate, '00:00', account.timezone_name) } : {}),
     ...(s.endDate ? { end_time: localIso(s.endDate, '23:59', account.timezone_name) } : {}),
     ...(s.hours && lifetime
-      ? { pacing_type: ['day_parting'], adset_schedule: [{ start_minute: toMinute(s.hours.from), end_minute: toMinute(s.hours.to), days: [0, 1, 2, 3, 4, 5, 6], timezone_type: 'ADVERTISER' }] }
+      ? { pacing_type: ['day_parting'], adset_schedule: [{ start_minute: toMinute(s.hours.from), end_minute: toMinute(s.hours.to), days: scheduleDays, timezone_type: 'ADVERTISER' }] }
       : {}),
     billing_event: 'IMPRESSIONS',
-    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+    bid_strategy: adv?.bidStrategy ?? 'LOWEST_COST_WITHOUT_CAP',
+    ...(adv && adv.bidStrategy !== 'LOWEST_COST_WITHOUT_CAP' && adv.bidAmount ? { bid_amount: majorToMinor(adv.bidAmount, item.currency) } : {}),
     optimization_goal: g.optimization_goal,
     destination_type: g.destination_type,
     ...(s.goal === 'call' ? { promoted_object: { page_id: item.page_id } } : {}),
@@ -450,10 +546,11 @@ export function metaPayloads(launch: { id: number; name: string; settings: any }
     ...(reachesEu ? { dsa_beneficiary: s.paidBy, dsa_payor: s.paidBy } : {}),
   };
   const isCall = s.goal === 'call';
-  const creative = (videoId: string, imageUrl: string | null) => ({
+  const creative = (videoId: string, imageUrl: string | null, featuresOff: string[] | null = CREATIVE_FEATURES_OFF) => ({
     name: `${launch.name} ${tag}`,
+    ...(adv?.urlTags && !isCall ? { url_tags: adv.urlTags } : {}),
     // Every Advantage+ creative feature off: Meta shows the video, caption and headline exactly as given.
-    degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(CREATIVE_FEATURES_OFF.map((f) => [f, { enroll_status: 'OPT_OUT' }])) },
+    ...(featuresOff ? { degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(featuresOff.map((f) => [f, { enroll_status: 'OPT_OUT' }])) } } : {}),
     object_story_spec: {
       page_id: item.page_id,
       video_data: {
@@ -461,6 +558,7 @@ export function metaPayloads(launch: { id: number; name: string; settings: any }
         ...(imageUrl ? { image_url: imageUrl } : {}),
         message: content.caption,
         ...(content.title ? { title: content.title } : {}),
+        ...(adv?.description ? { link_description: adv.description } : {}),
         call_to_action: isCall ? { type: 'CALL_NOW', value: { link: `tel:${content.link}` } } : { type: s.cta, value: { link: content.link } },
       },
     },
@@ -508,6 +606,7 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
   const p = metaPayloads(launch, item, account);
   // On a retry, look for objects an earlier attempt may have created before asking Meta to create new ones.
   const retrying = job.attempts > 1;
+  let lastRefusal = '';
   const started = Date.now();
   const save = (fields: Record<string, unknown>) => {
     const keys = Object.keys(fields);
@@ -578,9 +677,26 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
           break;
         }
         case 'creative': {
-          // An unused creative is invisible, so a retry may safely create a new one.
-          const { data } = await graph<any>({ method: 'POST', path: `${act}/adcreatives`, params: p.creative(item.video_id, item.thumbnail_url), accessToken: token, operation: 'meta.launch.creative' });
-          await save({ creative_id: data.id, stage: 'ad' });
+          // An unused creative is invisible, so a retry may safely create a new one. Meta rejects the whole creative
+          // when it does not accept one of the "Advantage+ off" switches, so fall back step by step and say so.
+          let creativeId: string | undefined;
+          let note: string | null = null;
+          const fallbacks = launch.settings?.advanced?.creativeEnhancements ? [null] : CREATIVE_FEATURE_FALLBACKS;
+          for (let i = 0; i < fallbacks.length && !creativeId; i++) {
+            const featuresOff = fallbacks[i];
+            try {
+              ({ data: { id: creativeId } } = await graph<any>({ method: 'POST', path: `${act}/adcreatives`, params: p.creative(item.video_id, item.thumbnail_url, featuresOff), accessToken: token, operation: 'meta.launch.creative' }));
+              if (i === 1) note = 'Meta accepted only the main "Advantage+ creative off" switch. Check the ad in Ads Manager and turn off any remaining enhancements by hand.';
+              if (i === 2) note = `Meta refused the "Advantage+ creative off" switches (${lastRefusal}). The ad was created without them: turn off enhancements by hand in Ads Manager.`;
+            } catch (err) {
+              const last = i === fallbacks.length - 1;
+              const canFallBack = err instanceof MetaApiError && (err.meta.class === 'validation' || err.meta.class === 'unknown' || err.meta.class === 'permission') && featuresOff !== null;
+              if (last || !canFallBack) throw err;
+              lastRefusal = String(err.message).slice(0, 300);
+            }
+          }
+          const content = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
+          await save({ creative_id: creativeId, stage: 'ad', ...(note ? { content: JSON.stringify({ ...content, warning: note }) } : {}) });
           break;
         }
         case 'ad': {
@@ -630,4 +746,45 @@ export async function cancelItem(orgId: number, itemId: number) {
   if (item.status === 'working') throw new AppError({ code: 'BUSY', message: 'This row is being created right now. Wait for it to finish or stop.', status: 409, category: 'conflict', retryable: true });
   if (item.job_id) await execute(`UPDATE jobs SET status='cancelled', finished_at=CURRENT_TIMESTAMP(3) WHERE id=? AND status IN ('queued','failed','needs_review','dead')`, [item.job_id]);
   await execute(`UPDATE launch_items SET status='cancelled', finished_at=CURRENT_TIMESTAMP(3) WHERE id=?`, [itemId]);
+}
+
+// ---------------------------------------------------------------- Advanced Ads: Meta's own targeting lists
+
+export const SEARCH_TYPES = ['location', 'interest', 'behavior', 'locale'] as const;
+export type SearchType = (typeof SEARCH_TYPES)[number];
+
+async function orgToken(orgId: number) {
+  const c = await queryOne<any>(`SELECT token_ciphertext FROM meta_connections WHERE org_id=? AND status IN ('active','error') ORDER BY status='active' DESC, id DESC LIMIT 1`, [orgId]);
+  if (!c) throw new AppError({ code: 'META_NOT_CONNECTED', message: 'Connect Meta first: targeting lists come from your Meta login.', status: 409, category: 'configuration' });
+  return decryptConnectionToken(c);
+}
+
+/** Looks a word up in Meta's targeting lists. Nothing is cached; every result comes straight from Meta. */
+export async function searchTargeting(orgId: number, type: SearchType, q: string, limit = 25) {
+  const token = await orgToken(orgId);
+  const operation = `meta.targeting.${type}`;
+  if (type === 'location') {
+    const { data } = await graph<any>({ path: 'search', params: { type: 'adgeolocation', q, location_types: ['country', 'region', 'city', 'zip'], limit }, accessToken: token, operation });
+    return (data.data ?? []).map((x: any) => ({ key: String(x.key), name: x.name, type: x.type, countryCode: x.country_code, detail: [x.region, x.country_name].filter(Boolean).join(', ') }));
+  }
+  if (type === 'interest') {
+    const { data } = await graph<any>({ path: 'search', params: { type: 'adinterest', q, limit }, accessToken: token, operation });
+    return (data.data ?? []).map((x: any) => ({ key: String(x.id), name: x.name, type: 'interest', detail: (x.path ?? []).join(' › '), audience: x.audience_size_lower_bound ?? null }));
+  }
+  if (type === 'behavior') {
+    const { data } = await graph<any>({ path: 'search', params: { type: 'adTargetingCategory', class: 'behaviors', limit: 500 }, accessToken: token, operation });
+    const needle = q.toLowerCase();
+    return (data.data ?? []).filter((x: any) => !needle || String(x.name).toLowerCase().includes(needle) || (x.path ?? []).join(' ').toLowerCase().includes(needle)).slice(0, limit)
+      .map((x: any) => ({ key: String(x.id), name: x.name, type: 'behavior', detail: (x.path ?? []).join(' › '), audience: x.audience_size_lower_bound ?? null }));
+  }
+  const { data } = await graph<any>({ path: 'search', params: { type: 'adlocale', q, limit }, accessToken: token, operation });
+  return (data.data ?? []).map((x: any) => ({ key: String(x.key), name: x.name, type: 'locale' }));
+}
+
+/** The custom and lookalike audiences of one working account, read live from Meta. */
+export async function customAudiencesFor(orgId: number, accountRowId: number) {
+  const account = await queryOne<any>(`SELECT a.account_id, c.token_ciphertext FROM meta_ad_accounts a JOIN meta_connections c ON c.id=a.connection_id WHERE a.id=? AND a.org_id=?`, [accountRowId, orgId]);
+  if (!account) throw new AppError({ code: 'NOT_FOUND', message: 'Account was not found.', status: 404, category: 'not_found' });
+  const { data } = await graph<any>({ path: `act_${account.account_id}/customaudiences`, params: { fields: 'id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,delivery_status', limit: 200 }, accessToken: decryptConnectionToken(account), operation: 'meta.targeting.audiences' });
+  return (data.data ?? []).map((x: any) => ({ id: String(x.id), name: x.name, subtype: x.subtype ?? null, sizeLow: x.approximate_count_lower_bound ?? null, sizeHigh: x.approximate_count_upper_bound ?? null, status: x.delivery_status?.status ?? null }));
 }

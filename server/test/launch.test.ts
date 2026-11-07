@@ -49,6 +49,8 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
   const created: Record<string, { id: string; name: string; parent?: string }[]> = { campaigns: [], adsets: [], ads: [] };
   let processingChecks = 0;
   let timeoutOnAd = false;
+  let rejectCreativeSwitches = false;
+  const creativeSpecs: number[] = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   let seq = 100;
 
@@ -75,7 +77,12 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
       const [first, edge] = path.split('/');
       if (method === 'POST') {
         if (edge === 'advideos') return json({ id: `v${++seq}` });
-        if (edge === 'adcreatives') return json({ id: `cr${++seq}` });
+        if (edge === 'adcreatives') {
+          const dof = params.degrees_of_freedom_spec ? JSON.parse(params.degrees_of_freedom_spec).creative_features_spec : null;
+          creativeSpecs.push(dof ? Object.keys(dof).length : 0);
+          if (rejectCreativeSwitches && dof && Object.keys(dof).length > 1) return json({ error: { message: '(#100) Invalid parameter: creative_features_spec', code: 100 } }, 400);
+          return json({ id: `cr${++seq}` });
+        }
         if (edge === 'ads' && timeoutOnAd) {
           timeoutOnAd = false;
           const id = `ad${++seq}`;
@@ -88,6 +95,13 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
           return json({ id });
         }
       }
+      if (first === 'search') {
+        if (params.type === 'adgeolocation') return json({ data: [{ key: '2420379', name: 'Dhaka', type: 'city', country_code: 'BD', country_name: 'Bangladesh', region: 'Dhaka Division' }, { key: 'BD', name: 'Bangladesh', type: 'country', country_code: 'BD' }] });
+        if (params.type === 'adinterest') return json({ data: [{ id: '6003139266461', name: 'Movies', audience_size_lower_bound: 1_000_000, path: ['Interests', 'Entertainment', 'Movies'] }] });
+        if (params.type === 'adTargetingCategory') return json({ data: [{ id: '6002714895372', name: 'Frequent travelers', path: ['Behaviors', 'Travel'] }, { id: '6071631541183', name: 'Small business owners', path: ['Behaviors', 'Digital activities'] }] });
+        if (params.type === 'adlocale') return json({ data: [{ key: 6, name: 'English (US)' }, { key: 46, name: 'Bengali' }] });
+      }
+      if (edge === 'customaudiences') return json({ data: [{ id: '9001', name: 'Past callers', subtype: 'CUSTOM', approximate_count_lower_bound: 1200, approximate_count_upper_bound: 1500, delivery_status: { status: 200 } }] });
       if (edge === 'thumbnails') return json({ data: [{ uri: 'https://scontent.example/t1.jpg', is_preferred: false }, { uri: 'https://scontent.example/t2.jpg', is_preferred: true }] });
       if (edge === 'campaigns' || edge === 'adsets' || edge === 'ads') return json({ data: created[edge].filter((x) => x.parent === first || first.startsWith('act_')) });
       if (first.startsWith('v') && params.fields === 'status') return json({ status: { video_status: ++processingChecks < 2 ? 'processing' : 'ready' } });
@@ -233,5 +247,69 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
     const list = (await agent.get('/api/launches')).body.items;
     expect(list[0]).toMatchObject({ name: 'Second', items: 1, done: 1, failed: 0 });
     expect((await query(`SELECT * FROM meta_video_uploads`)).length).toBe(3);
+  });
+
+  it('Advanced Ads: Meta lists for places, interests, behaviours, languages and audiences; every extra control reaches the ad set', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const search = (type: string, q: string) => agent.get(`/api/launch/search?type=${type}&q=${encodeURIComponent(q)}`).then((r) => r.body.items);
+    expect(await search('location', 'dha')).toEqual([
+      { key: '2420379', name: 'Dhaka', type: 'city', countryCode: 'BD', detail: 'Dhaka Division, Bangladesh' },
+      { key: 'BD', name: 'Bangladesh', type: 'country', countryCode: 'BD', detail: '' },
+    ]);
+    expect(await search('interest', 'mov')).toMatchObject([{ key: '6003139266461', name: 'Movies', detail: 'Interests › Entertainment › Movies', audience: 1_000_000 }]);
+    expect((await search('behavior', 'travel')).map((x: any) => x.name)).toEqual(['Frequent travelers']);
+    expect(await search('locale', 'ben')).toEqual([{ key: '6', name: 'English (US)', type: 'locale' }, { key: '46', name: 'Bengali', type: 'locale' }]);
+    expect((await agent.get(`/api/launch/accounts/${acc['DE 168']}/audiences`)).body.items).toEqual([{ id: '9001', name: 'Past callers', subtype: 'CUSTOM', sizeLow: 1200, sizeHigh: 1500, status: 200 }]);
+
+    const advanced = {
+      bidStrategy: 'LOWEST_COST_WITH_BID_CAP', bidAmount: 1.5,
+      locations: { include: [{ key: '2420379', name: 'Dhaka', type: 'city', radius: 20 }, { key: '3891', name: 'Sylhet Division', type: 'region' }], exclude: [{ key: '2420380', name: 'Gazipur', type: 'city' }], types: ['home'] },
+      interests: [{ key: '6003139266461', name: 'Movies' }], behaviors: [{ key: '6002714895372', name: 'Frequent travelers' }], excludedInterests: [{ key: '6003020834693', name: 'Gambling' }],
+      locales: [{ key: '46', name: 'Bengali' }], devicePlatforms: ['mobile'], userOs: ['Android'], days: [1, 2, 3, 4, 5], description: 'Open 7 days', urlTags: 'utm_source=fb', creativeEnhancements: false,
+    };
+    const body = { ...base(), name: 'Advanced test', goal: 'website', optimize: 'clicks', link: 'https://example.com/', countries: ['BD'], pageId: '501', advanced, rows: [{ accountRowId: acc['DE 168'], customAudiences: { include: ['9001'], exclude: [] } }] };
+    // problems are named before anything is created
+    const bad = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, specialCategory: 'EMPLOYMENT', advanced: { ...advanced, bidAmount: undefined } })).body;
+    expect(bad.problems).toEqual(expect.arrayContaining(['A bid cap needs an amount.', 'Job ads cannot exclude interests (Meta special ad category rule).', 'Job ads cannot exclude locations (Meta special ad category rule).']));
+    expect((await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(body)).body.ready).toBe(true);
+
+    calls.length = 0;
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, confirm: true });
+    expect(res.status).toBe(201);
+    await drain();
+    const l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(l.items.map((i: any) => [i.status, i.adStatus])).toEqual([['done', 'PAUSED']]);
+    const set = calls.find((c) => c.method === 'POST' && c.path === 'act_168/adsets')!.params;
+    expect(set.bid_strategy).toBe('LOWEST_COST_WITH_BID_CAP');
+    expect(set.bid_amount).toBe('150');
+    expect(JSON.parse(set.adset_schedule)[0].days).toEqual([1, 2, 3, 4, 5]);
+    expect(JSON.parse(set.targeting)).toEqual({
+      geo_locations: { countries: ['BD'], regions: [{ key: '3891' }], cities: [{ key: '2420379', radius: 20, distance_unit: 'mile' }], location_types: ['home'] },
+      excluded_geo_locations: { cities: [{ key: '2420380' }] },
+      age_min: 21, age_max: 60, targeting_automation: { advantage_audience: 0 },
+      flexible_spec: [{ interests: [{ id: '6003139266461', name: 'Movies' }], behaviors: [{ id: '6002714895372', name: 'Frequent travelers' }] }],
+      exclusions: { interests: [{ id: '6003020834693', name: 'Gambling' }] },
+      locales: [46], device_platforms: ['mobile'], user_os: ['Android'],
+      custom_audiences: [{ id: '9001' }],
+      publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed'], instagram_positions: ['reels'],
+    });
+    const cr = calls.find((c) => c.method === 'POST' && c.path === 'act_168/adcreatives')!.params;
+    expect(cr.url_tags).toBe('utm_source=fb');
+    expect(JSON.parse(cr.object_story_spec).video_data).toMatchObject({ link_description: 'Open 7 days', call_to_action: { type: 'LEARN_MORE', value: { link: 'https://example.com/' } } });
+    expect(JSON.parse(cr.degrees_of_freedom_spec).creative_features_spec.standard_enhancements).toEqual({ enroll_status: 'OPT_OUT' });
+  });
+
+  it('falls back when Meta refuses the Advantage+ creative switches, and says so on the row', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    rejectCreativeSwitches = true;
+    creativeSpecs.length = 0;
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), name: 'Third', pageId: '501', rows: [{ accountRowId: acc['DE 154'] }], confirm: true });
+    expect(res.status).toBe(201);
+    await drain();
+    rejectCreativeSwitches = false;
+    const l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(creativeSpecs).toEqual([14, 1]); // all switches refused, the umbrella switch accepted
+    expect(l.items[0]).toMatchObject({ status: 'done', adStatus: 'PAUSED' });
+    expect(l.items[0].warning).toMatch(/accepted only the main/);
   });
 });

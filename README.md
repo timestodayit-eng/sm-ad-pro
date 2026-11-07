@@ -5,7 +5,7 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.6.0)
+## What works in this release (0.7.0)
 
 | Area | State |
 | --- | --- |
@@ -25,7 +25,11 @@ Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScrip
 | Balance page: prepaid funds, amount owed, spending limit left and days left at the last 7 days' spend for every working account, plus a low-balance alert | Built, tested against recorded Meta responses; **prepaid balance text not yet verified against a live Meta account** |
 | Easy Ads: the same video, caption and headline to the accounts (or group) you tick, in your account order, from one Facebook Page; lifetime budget (or daily) with start and end dates, running hours such as 07:00–22:00 in each account's time zone, fixed placements you tick (never Advantage+ placements), every Advantage+ creative change switched off; budget and age range per account (typed in, stepped 20, 22, 24 …, or from an uploaded CSV sheet); goal Call or Website; review with every problem named, explicit confirm; one campaign + one ad set + one ad per account, **all created PAUSED**; video uploaded to each account once and reused | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
 | Publishing page: live progress per account through the 7 steps, the real Meta IDs, the error Meta gave, Retry that checks Meta first so it never makes a duplicate, Cancel for rows not started | Built and tested |
-| Pause/resume, Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
+| Advanced Ads: everything Easy Ads does plus bid cap or cost cap, places inside the countries (regions, cities with a radius, postcodes) and places to exclude, living-in / recently-in / travelling-in, interests and behaviours (and interests to exclude), languages, mobile/desktop and Android/iOS, running days, link description and URL tags, Advantage+ creative on or off, and per-account overrides (Page, video, caption, title, link, and that account's own custom audiences to include or exclude). Every list is read live from Meta's own search; job-ad (Employment) rules are checked before anything is created | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
+| AI Analytics: findings computed by the panel's code from synced data (spend spikes, stalled delivery, spend without results, expensive or cheap results against the other accounts, low balance, rejected ads, failed launches), each with the numbers behind it, likely causes, confidence and a link; optional one-paragraph explanation by the assistant in Bengali or English | Built and tested; findings work without an AI key |
+| AI Ads Copilot: chat in Bengali, Banglish or English about accounts, campaigns, balances, findings, launches and notifications; every number comes from the panel's data through tools, never guessed; budget changes come back as a proposal card that goes through the same preview and confirm as the Budgets page | Built, tested with a recorded assistant; needs `OPENAI_API_KEY` and `OPENAI_MODEL` in the hosting settings; **not yet run against the real OpenAI API** |
+| AI Documents: performance reports built from synced data (overview, accounts, campaigns, money left, findings) with an assistant-written summary and recommendations marked as such; edit in the panel, every save is a new version, export as PDF or Word | Built and tested; the assistant parts need the OpenAI settings, the tables do not |
+| Pause/resume, scheduled reports, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
 
 The panel never shows sample data. Pages for modules that are not built say so instead of showing fake numbers or buttons.
 

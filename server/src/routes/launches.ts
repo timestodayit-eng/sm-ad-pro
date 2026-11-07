@@ -7,7 +7,7 @@ import { requirePermission } from '../auth/sessions.js';
 import { minorToMajor } from '../meta/live.js';
 import { audit } from '../services/audit.js';
 import {
-  DEFAULT_PLACEMENTS, GOALS, PLACEMENTS, STAGE_LABEL, WEBSITE_CTAS, cancelItem, createLaunch, launchInput, pagesFor, planLaunch, retryItem, sheetTemplate, sheetToRows,
+  DEFAULT_PLACEMENTS, GOALS, PLACEMENTS, SEARCH_TYPES, STAGE_LABEL, WEBSITE_CTAS, cancelItem, createLaunch, customAudiencesFor, launchInput, pagesFor, planLaunch, retryItem, searchTargeting, sheetTemplate, sheetToRows,
 } from '../services/launch.js';
 import { managedAccounts } from './live.js';
 
@@ -77,6 +77,26 @@ launchesRouter.post(
   }),
 );
 
+/** Advanced Ads: Meta's own lists of places, interests, behaviours and languages. Read-only. */
+launchesRouter.get(
+  '/launch/search',
+  requirePermission('accounts.read'),
+  asyncHandler(async (req, res) => {
+    const { type, q } = parse(z.object({ type: z.enum(SEARCH_TYPES), q: z.string().trim().max(100).default('') }), req.query ?? {});
+    if (!q && type !== 'behavior') return res.json({ items: [] });
+    res.json({ items: await searchTargeting(req.user!.orgId, type, q) });
+  }),
+);
+
+/** Advanced Ads: one account's custom and lookalike audiences, read live from Meta. */
+launchesRouter.get(
+  '/launch/accounts/:id/audiences',
+  requirePermission('accounts.read'),
+  asyncHandler(async (req, res) => {
+    res.json({ items: await customAudiencesFor(req.user!.orgId, Number(req.params.id)) });
+  }),
+);
+
 launchesRouter.post(
   '/launch/plan',
   requirePermission('accounts.read'),
@@ -110,6 +130,7 @@ function publicItem(r: any) {
     status: r.status, stage: r.stage, stageLabel: STAGE_LABEL[r.stage] ?? r.stage,
     videoId: r.video_id, campaignId: r.campaign_id, adsetId: r.adset_id, creativeId: r.creative_id, adId: r.ad_id, adStatus: r.ad_status,
     error: r.error_message ? { code: r.error_code, message: r.error_message, hint: r.error_hint } : null,
+    warning: (() => { try { return (typeof r.content === 'string' ? JSON.parse(r.content) : r.content)?.warning ?? null; } catch { return null; } })(),
     updatedAt: r.updated_at,
   };
 }

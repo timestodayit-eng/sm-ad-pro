@@ -1,5 +1,5 @@
 -- =====================================================================================
--- Ads Command Center 0.6.0 : FRESH INSTALL database (schema version 9)
+-- Ads Command Center 0.7.0 : FRESH INSTALL database (schema version 10)
 --
 -- You normally do NOT need this file: the app's Setup page installs the database itself.
 -- Use it only if you prefer to import with phpMyAdmin (MySQL 8).
@@ -9,7 +9,7 @@
 --     "table already exists" instead of overwriting anything. Never run it over a live database.
 --   * To upgrade an existing install, do NOT use this file. Deploy the new release and press
 --     "Apply pending migrations" in Settings -> Database (see docs/UPGRADE.md).
---   * It records migrations 1-9 in schema_migrations, so the app sees the database as up to
+--   * It records migrations 1-10 in schema_migrations, so the app sees the database as up to
 --     date. After importing, open the panel: it asks for the SETUP_TOKEN and creates the Super Admin.
 -- =====================================================================================
 
@@ -631,6 +631,63 @@ CREATE TABLE meta_video_uploads (
   CONSTRAINT fk_video_uploads_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------- 0010_ai
+-- 0010_ai: AI Copilot conversations and AI Documents (versioned, section-based reports).
+-- AI Analytics findings are computed from synced data on request and are not stored.
+
+CREATE TABLE ai_conversations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(190) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  KEY idx_ai_conv_user (org_id, user_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE ai_messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  -- user | assistant | tool
+  role VARCHAR(12) NOT NULL,
+  content MEDIUMTEXT NULL,
+  -- assistant: the tool calls it asked for; tool: the call it answers
+  tool_calls JSON NULL,
+  tool_call_id VARCHAR(64) NULL,
+  tool_name VARCHAR(64) NULL,
+  -- a change the assistant proposed (for example a budget plan); applied only through the normal confirm flow
+  proposal JSON NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_ai_msg_conv (conversation_id, id),
+  CONSTRAINT fk_ai_msg_conv FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE ai_documents (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  title VARCHAR(190) NOT NULL,
+  -- performance (more kinds later)
+  kind VARCHAR(32) NOT NULL,
+  params JSON NOT NULL,
+  current_version INT NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  KEY idx_ai_docs_org (org_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE ai_document_versions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  document_id BIGINT UNSIGNED NOT NULL,
+  version INT NOT NULL,
+  sections JSON NOT NULL,
+  note VARCHAR(255) NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_ai_doc_version (document_id, version),
+  CONSTRAINT fk_ai_docver_doc FOREIGN KEY (document_id) REFERENCES ai_documents(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------- record what was applied
 INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
   (1, '0001_foundation', 'bed3cda6f6eec68af544ca187e09074281aa5ff13d2a76228b7ec99449af8560', 'applied', 'fresh-install-sql'),
@@ -641,4 +698,5 @@ INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALU
   (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'fresh-install-sql'),
   (7, '0007_budget_changes', '7ef76bbd233f7c232a4217e345c2cc19e131a5dd4e77ff0adc03d68d956dd900', 'applied', 'fresh-install-sql'),
   (8, '0008_account_funds', '73c0bb4d0f513ff177660d25fd9ee6322807fa97c8b6380158d24cc506ec9f26', 'applied', 'fresh-install-sql'),
-  (9, '0009_launches', 'b90814e072bc0614fc9be6652cf65cd419dee9384ab2e5bce200a52c0e719c3b', 'applied', 'fresh-install-sql');
+  (9, '0009_launches', 'b90814e072bc0614fc9be6652cf65cd419dee9384ab2e5bce200a52c0e719c3b', 'applied', 'fresh-install-sql'),
+  (10, '0010_ai', '34b20c7733cc57b2dc305a03485ccad94577d63d31203fbe9f6fb48820932bb4', 'applied', 'fresh-install-sql');

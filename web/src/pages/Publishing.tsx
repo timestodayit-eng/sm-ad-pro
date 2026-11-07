@@ -71,6 +71,7 @@ function LaunchDetail({ id }: { id: number }) {
                   <Stages stage={i.stage} status={i.status} />
                   <div className="mt-1 text-xs text-ink-3">{i.status === 'done' ? `finished ${timeAgo(i.updatedAt)}` : i.stageLabel}</div>
                   {i.error && <div className="mt-1 max-w-[320px] text-xs text-bad">{i.error.message}{i.error.hint && <span className="text-ink-3"> {i.error.hint}</span>}</div>}
+                  {i.warning && <div className="mt-1 max-w-[320px] text-xs text-warn">{i.warning}</div>}
                 </td>
                 <td className="px-2 py-3 text-xs text-ink-3 tabular-nums">
                   {i.campaignId ? <div>Campaign {i.campaignId}</div> : null}

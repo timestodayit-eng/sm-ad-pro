@@ -71,6 +71,7 @@ const schema = z
 
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_MODEL: z.string().optional(),
+    OPENAI_BASE_URL: z.string().url().optional(),
 
     JOB_RUNNER_SECRET: z.string().min(32, 'must be at least 32 characters'),
     IN_PROCESS_WORKER: bool('true'),

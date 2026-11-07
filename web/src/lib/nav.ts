@@ -46,7 +46,7 @@ export const NAV: NavGroup[] = [
     label: 'grpCreate',
     items: [
       { to: '/easy-ads', label: 'easyAds', icon: Sparkles },
-      { to: '/advanced-ads', label: 'advancedAds', icon: SlidersHorizontal, phase: 5, summary: 'Every Marketing API control that the pinned API version supports, validated against Employment special-ad-category rules, with per-account overrides.' },
+      { to: '/advanced-ads', label: 'advancedAds', icon: SlidersHorizontal },
       { to: '/publishing', label: 'publishing', icon: Rocket },
     ],
   },
@@ -66,9 +66,9 @@ export const NAV: NavGroup[] = [
   {
     label: 'grpAI',
     items: [
-      { to: '/copilot', label: 'copilot', icon: Bot, phase: 7, summary: 'Ask in Bengali, Banglish or English. Answers come from your real synced data through permission-checked tools; every change is previewed and needs your approval.' },
-      { to: '/ai-analytics', label: 'aiAnalytics', icon: BrainCircuit, phase: 6, summary: 'Diagnostic findings with evidence, likely causes and confidence, plus budget proposals calculated by code, not guessed by the model.' },
-      { to: '/documents', label: 'aiDocuments', icon: FileText, phase: 8, summary: 'Editable, section-based, versioned reports built from your data, exported as PDF and Word.' },
+      { to: '/copilot', label: 'copilot', icon: Bot, perm: 'ai.use' },
+      { to: '/ai-analytics', label: 'aiAnalytics', icon: BrainCircuit, perm: 'ai.use' },
+      { to: '/documents', label: 'aiDocuments', icon: FileText, perm: 'reports.read' },
     ],
   },
   {

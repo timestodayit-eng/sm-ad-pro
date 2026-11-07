@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
-import { Download, FileSpreadsheet, Phone, Rocket, Sparkles, Upload, Globe } from 'lucide-react';
+import { Download, FileSpreadsheet, Globe, Phone, Rocket, Search, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorAlert, Field, Input, Modal, PageHeader, Segmented, Select, Skeleton, cx } from '../components/ui';
@@ -7,7 +7,10 @@ import { get, post } from '../lib/api';
 import { usePageTitle, useSession } from '../lib/session';
 import { money } from './Live';
 
-type Row = { accountRowId: number; pageId?: string; dailyBudget?: number; mediaAssetId?: number; caption?: string; title?: string; link?: string; ageMin?: number; ageMax?: number };
+type Row = { accountRowId: number; pageId?: string; dailyBudget?: number; mediaAssetId?: number; caption?: string; title?: string; link?: string; ageMin?: number; ageMax?: number; customAudiences?: { include: string[]; exclude: string[] } };
+type Named = { key: string; name: string; type?: string; detail?: string; countryCode?: string; radius?: number; audience?: number | null };
+type SearchType = 'location' | 'interest' | 'behavior' | 'locale';
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function useDebounced<T>(v: T, ms = 350) {
   const [d, setD] = useState(v);
@@ -36,8 +39,105 @@ function Section({ n, title, children, description }: { n: number; title: string
   );
 }
 
+/** Type a word, pick from Meta's own list. Nothing here is typed from memory: every key comes from Meta's search. */
+function Picker({ type, label, hint, value, onChange, placeholder, radius }: { type: SearchType; label: string; hint?: string; value: Named[]; onChange: (v: Named[]) => void; placeholder?: string; radius?: boolean }) {
+  const [q, setQ] = useState('');
+  const dq = useDebounced(q.trim(), 300);
+  const res = useQuery({ queryKey: ['launch', 'search', type, dq], queryFn: () => get(`/launch/search?type=${type}&q=${encodeURIComponent(dq)}`), enabled: dq.length > 0 || type === 'behavior', staleTime: 60_000 });
+  const items: Named[] = (res.data?.items ?? []).filter((x: Named) => !value.some((v) => v.key === x.key));
+  const [open, setOpen] = useState(false);
+  return (
+    <Field label={label} hint={hint}>
+      <div className="relative">
+        <div className="flex items-center gap-2">
+          <Search className="size-4 shrink-0 text-ink-3" />
+          <Input value={q} placeholder={placeholder ?? 'Type to search Meta’s list…'} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} aria-label={`Search ${label.toLowerCase()}`} />
+        </div>
+        {open && (dq || type === 'behavior') && (
+          <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-line bg-surface shadow-lg">
+            {res.isLoading ? <div className="px-3 py-2 text-sm text-ink-3">Asking Meta…</div>
+              : res.error ? <div className="px-3 py-2 text-sm text-bad">{(res.error as any)?.message ?? 'Search failed'}</div>
+              : items.length === 0 ? <div className="px-3 py-2 text-sm text-ink-3">Nothing found.</div>
+              : items.map((it) => (
+                <button key={it.key} type="button" className="block w-full px-3 py-2 text-left text-sm hover:bg-surface-2" onMouseDown={(e) => e.preventDefault()} onClick={() => { onChange([...value, { key: it.key, name: it.name, type: it.type, countryCode: it.countryCode, ...(radius && it.type === 'city' ? { radius: 15 } : {}) }]); setQ(''); setOpen(false); }}>
+                  <span className="font-medium text-ink">{it.name}</span>
+                  {it.type && <span className="ml-2 rounded bg-surface-2 px-1 text-[10px] text-ink-3 uppercase">{it.type}</span>}
+                  {it.detail && <span className="ml-2 text-xs text-ink-3">{it.detail}</span>}
+                  {it.audience != null && <span className="ml-2 text-xs text-ink-3">· {Number(it.audience).toLocaleString('en')}+</span>}
+                </button>
+              ))}
+          </div>
+        )}
+      </div>
+      {value.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {value.map((v) => (
+            <li key={v.key} className="flex items-center gap-1 rounded-full border border-line bg-surface-2 py-0.5 pr-1 pl-2.5 text-xs text-ink">
+              {v.name}{v.type && v.type !== 'interest' && v.type !== 'locale' && v.type !== 'behavior' ? <span className="text-ink-3"> · {v.type}</span> : null}
+              {radius && v.type === 'city' && (
+                <span className="flex items-center gap-1 text-ink-3">+<input className="w-10 rounded border border-line bg-surface px-1 text-right text-xs" inputMode="numeric" value={v.radius ?? ''} aria-label={`Radius around ${v.name} in miles`} onChange={(e) => onChange(value.map((x) => (x.key === v.key ? { ...x, radius: e.target.value === '' ? undefined : Math.min(80, Math.max(1, Number(e.target.value) || 1)) } : x)))} />mi</span>
+              )}
+              <button type="button" className="rounded-full p-0.5 text-ink-3 hover:bg-surface-3 hover:text-ink" onClick={() => onChange(value.filter((x) => x.key !== v.key))} aria-label={`Remove ${v.name}`}><X className="size-3" /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Field>
+  );
+}
+
+/** Per-account overrides for Advanced Ads: Page, video, text, link and this account's own custom audiences. */
+function OverrideModal({ account, row, pages, videos, goal, onClose, onChange }: { account: any; row: Row; pages: any[]; videos: any[]; goal: 'call' | 'website'; onClose: () => void; onChange: (p: Partial<Row>) => void }) {
+  const aud = useQuery({ queryKey: ['launch', 'audiences', account.id], queryFn: () => get(`/launch/accounts/${account.id}/audiences`), staleTime: 60_000 });
+  const ca = row.customAudiences ?? { include: [], exclude: [] };
+  const setCa = (id: string, where: 'include' | 'exclude' | 'none') =>
+    onChange({ customAudiences: { include: where === 'include' ? [...new Set([...ca.include, id])] : ca.include.filter((x) => x !== id), exclude: where === 'exclude' ? [...new Set([...ca.exclude, id])] : ca.exclude.filter((x) => x !== id) } });
+  return (
+    <Modal open onClose={onClose} title={`${account.name}: this account only`} footer={<Button onClick={onClose}>Done</Button>}>
+      <p className="mb-3 text-sm text-ink-3">Anything left empty uses the value from the main form.</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Facebook Page"><Select value={row.pageId ?? ''} onChange={(e) => onChange({ pageId: e.target.value || undefined })} aria-label={`Page for ${account.name}`}><option value="">Same as the launch</option>{pages.map((pg) => <option key={pg.id} value={pg.id}>{pg.name}</option>)}</Select></Field>
+        <Field label="Video"><Select value={row.mediaAssetId ?? ''} onChange={(e) => onChange({ mediaAssetId: e.target.value ? Number(e.target.value) : undefined })} aria-label={`Video for ${account.name}`}><option value="">Same as the launch</option>{videos.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}</Select></Field>
+        <Field label="Title (headline)"><Input value={row.title ?? ''} onChange={(e) => onChange({ title: e.target.value || undefined })} maxLength={255} /></Field>
+        <Field label={goal === 'call' ? 'Phone number' : 'Website address'}><Input value={row.link ?? ''} onChange={(e) => onChange({ link: e.target.value || undefined })} /></Field>
+      </div>
+      <div className="mt-3"><Field label="Caption (primary text)"><textarea className={textareaCls} rows={3} value={row.caption ?? ''} onChange={(e) => onChange({ caption: e.target.value || undefined })} maxLength={2000} /></Field></div>
+      <div className="mt-4">
+        <div className="mb-1 text-sm font-medium text-ink">Custom audiences in this account</div>
+        {aud.isLoading ? <Skeleton className="h-16" /> : aud.error ? <ErrorAlert error={aud.error} /> : !aud.data?.items?.length ? <p className="text-sm text-ink-3">This account has no custom or lookalike audiences on Meta.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-ink-3 uppercase"><th className="py-1">Audience</th><th>Size</th><th className="text-right">Use</th></tr></thead>
+            <tbody className="divide-y divide-line">
+              {aud.data.items.map((a: any) => {
+                const state = ca.include.includes(a.id) ? 'include' : ca.exclude.includes(a.id) ? 'exclude' : 'none';
+                return (
+                  <tr key={a.id}>
+                    <td className="py-1.5"><div className="text-ink">{a.name}</div><div className="text-xs text-ink-3">{a.subtype ?? ''}</div></td>
+                    <td className="text-xs text-ink-3 tabular-nums">{a.sizeLow != null ? `${Number(a.sizeLow).toLocaleString('en')}–${Number(a.sizeHigh ?? a.sizeLow).toLocaleString('en')}` : '—'}</td>
+                    <td className="text-right"><Select className="h-8 w-28" value={state} onChange={(e) => setCa(a.id, e.target.value as any)} aria-label={`Use ${a.name}`}><option value="none">Not used</option><option value="include">Include</option><option value="exclude">Exclude</option></Select></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 export function EasyAdsPage() {
   usePageTitle('Easy Ads');
+  return <LaunchForm advanced={false} />;
+}
+
+export function AdvancedAdsPage() {
+  usePageTitle('Advanced Ads');
+  return <LaunchForm advanced />;
+}
+
+/** One form for both pages. Advanced adds every extra control; the launch itself goes through the same plan → confirm → PAUSED path. */
+export function LaunchForm({ advanced }: { advanced: boolean }) {
   const { can } = useSession();
   const navigate = useNavigate();
   const setup = useQuery({ queryKey: ['launch', 'setup'], queryFn: () => get('/launch/setup') });
@@ -77,6 +177,24 @@ export function EasyAdsPage() {
   const [sheetNote, setSheetNote] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Advanced Ads only
+  const [overrideFor, setOverrideFor] = useState<number | null>(null);
+  const [bidStrategy, setBidStrategy] = useState<'LOWEST_COST_WITHOUT_CAP' | 'LOWEST_COST_WITH_BID_CAP' | 'COST_CAP'>('LOWEST_COST_WITHOUT_CAP');
+  const [bidAmount, setBidAmount] = useState('');
+  const [locIn, setLocIn] = useState<Named[]>([]);
+  const [locOut, setLocOut] = useState<Named[]>([]);
+  const [locTypes, setLocTypes] = useState<string[]>(['home', 'recent']);
+  const [interests, setInterests] = useState<Named[]>([]);
+  const [behaviors, setBehaviors] = useState<Named[]>([]);
+  const [exInterests, setExInterests] = useState<Named[]>([]);
+  const [locales, setLocales] = useState<Named[]>([]);
+  const [devices, setDevices] = useState<string[]>(['mobile', 'desktop']);
+  const [userOs, setUserOs] = useState<string[]>([]);
+  const [days, setDays] = useState<number[]>([]);
+  const [description, setDescription] = useState('');
+  const [urlTags, setUrlTags] = useState('');
+  const [enhancements, setEnhancements] = useState(false);
+  const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   useEffect(() => {
     setOptimize(goal === 'call' ? 'calls' : 'clicks');
@@ -93,6 +211,12 @@ export function EasyAdsPage() {
     hours: hoursOn && kind === 'lifetime' ? { from, to } : undefined,
     placements: placements ?? setup.data?.defaultPlacements ?? [],
     rows,
+    ...(advanced ? { advanced: {
+      bidStrategy, bidAmount: bidAmount === '' ? undefined : Number(bidAmount) || 0,
+      locations: { include: locIn, exclude: locOut, types: locTypes },
+      interests, behaviors, excludedInterests: exInterests, locales, devicePlatforms: devices, userOs, days,
+      description, urlTags, creativeEnhancements: enhancements,
+    } } : {}),
   };
   const debounced = useDebounced(body);
   const plan = useQuery({
@@ -147,13 +271,15 @@ export function EasyAdsPage() {
   return (
     <>
       <PageHeader
-        title="Easy Ads"
-        description="Send one video ad to the accounts you choose, in your account order. Each account gets its own campaign, ad set and ad, all created PAUSED on Meta. Nothing goes live until you switch it on."
-        actions={<Link to="/publishing" className="text-sm font-medium text-brand hover:underline">Launch history →</Link>}
+        title={advanced ? 'Advanced Ads' : 'Easy Ads'}
+        description={advanced
+          ? 'Everything Easy Ads does, plus every control: bid caps, places, interests, behaviours, languages, devices, days, per-account overrides and each account’s own custom audiences. All lists come from Meta. Everything is still created PAUSED.'
+          : 'Send one video ad to the accounts you choose, in your account order. Each account gets its own campaign, ad set and ad, all created PAUSED on Meta. Nothing goes live until you switch it on.'}
+        actions={<span className="flex items-center gap-3 text-sm font-medium"><Link to={advanced ? '/easy-ads' : '/advanced-ads'} className="flex items-center gap-1 text-brand hover:underline">{advanced ? <><Sparkles className="size-4" /> Easy Ads</> : <><SlidersHorizontal className="size-4" /> Advanced Ads</>}</Link><Link to="/publishing" className="text-brand hover:underline">Launch history →</Link></span>}
       />
       {setup.error && <ErrorAlert error={setup.error} />}
       {accounts.length === 0 ? (
-        <Card><EmptyState icon={<Sparkles className="size-6" />} title="No working accounts" action={<Link to="/settings#working-accounts" className="text-sm font-medium text-brand hover:underline">Choose working accounts</Link>}>Easy Ads launches to your working accounts.</EmptyState></Card>
+        <Card><EmptyState icon={<Sparkles className="size-6" />} title="No working accounts" action={<Link to="/settings#working-accounts" className="text-sm font-medium text-brand hover:underline">Choose working accounts</Link>}>{advanced ? 'Advanced Ads' : 'Easy Ads'} launches to your working accounts.</EmptyState></Card>
       ) : (
         <>
           <Section n={1} title="Accounts, Page, budget and age" description="Tick the accounts, or pick a group. They run in your account order. One Facebook Page runs the ads in every account. The same video, caption and headline go to every account; only the budget and the age range can differ here.">
@@ -198,6 +324,7 @@ export function EasyAdsPage() {
                     <th className="px-3 py-2">Account</th>
                     <th className="px-2 py-2 text-right">{kind === 'lifetime' ? 'Lifetime budget' : 'Daily budget'}{mode !== 'each' && <span className="font-normal normal-case"> (optional)</span>}</th>
                     <th className="px-2 py-2">Age range <span className="font-normal normal-case">(optional)</span></th>
+                    {advanced && <th className="px-2 py-2">This account only</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -221,6 +348,11 @@ export function EasyAdsPage() {
                               onChange={(e) => patch(a.id, { ageMax: e.target.value === '' ? undefined : Number(e.target.value) })} aria-label={`Maximum age for ${a.name}`} />
                           </div>
                         </td>
+                        {advanced && (
+                          <td className="px-2 py-2">
+                            <Button size="sm" variant="secondary" disabled={!row} onClick={() => setOverrideFor(a.id)}>Overrides{row && (row.caption || row.title || row.link || row.mediaAssetId || row.pageId || row.customAudiences?.include.length || row.customAudiences?.exclude.length) ? ' ·' : ''}</Button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -265,6 +397,16 @@ export function EasyAdsPage() {
               <Field label="Title (headline)" hint="Optional.">
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={255} />
               </Field>
+              {advanced && (
+                <>
+                  <Field label="Description" hint="Shown under the headline. Optional."><Input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={255} /></Field>
+                  {goal === 'website' && <Field label="URL tags" hint="Added to the link for tracking, without the leading ?. For example utm_source=fb&utm_campaign={{campaign.name}}"><Input value={urlTags} onChange={(e) => setUrlTags(e.target.value)} maxLength={500} /></Field>}
+                  <label className="flex items-center gap-2 text-sm text-ink lg:col-span-2">
+                    <input type="checkbox" className="size-4" checked={enhancements} onChange={(e) => setEnhancements(e.target.checked)} />
+                    Allow Advantage+ creative enhancements (Meta may change the video, text or button). Off means the ad runs exactly as written.
+                  </label>
+                </>
+              )}
             </div>
           </Section>
 
@@ -291,6 +433,34 @@ export function EasyAdsPage() {
               <input type="checkbox" className="size-4" checked={advantage} onChange={(e) => setAdvantage(e.target.checked)} />
               Let Meta reach beyond these ages (Advantage+ audience)
             </label>
+            {advanced && (
+              <div className="mt-5 grid gap-4 border-t border-line pt-5 lg:grid-cols-2">
+                <Picker type="location" label="Places inside those countries" hint="Regions, cities or postcodes from Meta’s list. Cities take a radius in miles. Leave empty for whole countries." value={locIn} onChange={setLocIn} radius />
+                <Picker type="location" label="Places to exclude" value={locOut} onChange={setLocOut} />
+                <Field label="Count people who are">
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    {[['home', 'Living there'], ['recent', 'Recently there'], ['travel_in', 'Travelling there']].map(([v, l]) => (
+                      <label key={v} className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" className="size-4" checked={locTypes.includes(v)} onChange={() => setLocTypes(toggleIn(locTypes, v))} /> {l}</label>
+                    ))}
+                  </div>
+                </Field>
+                <Picker type="locale" label="Languages" hint="Optional. Empty means every language." value={locales} onChange={setLocales} />
+                <Picker type="interest" label="Interests" hint="Detailed targeting. People matching any of these." value={interests} onChange={setInterests} />
+                <Picker type="behavior" label="Behaviours" placeholder="Type to filter Meta’s behaviour list…" value={behaviors} onChange={setBehaviors} />
+                <Picker type="interest" label="Exclude people interested in" hint={special === 'EMPLOYMENT' ? 'Not allowed for job ads.' : undefined} value={exInterests} onChange={setExInterests} />
+                <Field label="Devices">
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    {[['mobile', 'Mobile'], ['desktop', 'Desktop']].map(([v, l]) => (
+                      <label key={v} className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" className="size-4" checked={devices.includes(v)} onChange={() => setDevices(toggleIn(devices, v))} /> {l}</label>
+                    ))}
+                    <span className="mx-1 h-5 w-px bg-line" />
+                    {[['Android', 'Android only'], ['iOS', 'iOS only']].map(([v, l]) => (
+                      <label key={v} className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" className="size-4" checked={userOs.includes(v)} onChange={() => setUserOs(toggleIn(userOs, v))} /> {l}</label>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+            )}
             <div className="mt-5">
               <div className="mb-2 text-sm font-medium text-ink">Placements</div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -326,9 +496,24 @@ export function EasyAdsPage() {
                       <div className="w-32"><Input type="time" value={to} disabled={!hoursOn} onChange={(e) => setTo(e.target.value)} aria-label="To hour" /></div>
                     </div>
                   </Field>
+                  {advanced && hoursOn && (
+                    <Field label="On these days" hint="None ticked means every day.">
+                      <div className="flex h-10 items-center gap-2">
+                        {DAYS.map((d, i) => <label key={d} className="flex items-center gap-1 text-sm text-ink"><input type="checkbox" className="size-4" checked={days.includes(i)} onChange={() => setDays(toggleIn(days as any, i as any) as any)} /> {d}</label>)}
+                      </div>
+                    </Field>
+                  )}
                 </>
               )}
             </div>
+            {advanced && (
+              <div className="mb-4 flex flex-wrap items-end gap-4">
+                <Field label="Bid strategy">
+                  <Select className="w-56" value={bidStrategy} onChange={(e) => setBidStrategy(e.target.value as any)}><option value="LOWEST_COST_WITHOUT_CAP">Lowest cost (no cap)</option><option value="LOWEST_COST_WITH_BID_CAP">Bid cap</option><option value="COST_CAP">Cost cap</option></Select>
+                </Field>
+                {bidStrategy !== 'LOWEST_COST_WITHOUT_CAP' && <Field label={bidStrategy === 'COST_CAP' ? 'Cost cap per result' : 'Maximum bid'} hint="In each account’s currency."><Input className="w-28" inputMode="decimal" value={bidAmount} onChange={(e) => setBidAmount(e.target.value)} /></Field>}
+              </div>
+            )}
             <div className="flex flex-wrap items-end gap-4">
               <Segmented label="Budget" value={mode} onChange={setMode} options={[{ value: 'stepped', label: 'Step up' }, { value: 'same', label: 'Same for all' }, { value: 'each', label: 'Each account' }]} />
               {mode !== 'each' && <Field label={mode === 'stepped' ? 'First account' : 'Every account'}><Input className="w-28" inputMode="decimal" value={start} onChange={(e) => setStart(e.target.value)} /></Field>}
@@ -387,6 +572,9 @@ export function EasyAdsPage() {
             )}
           </Section>
 
+          {advanced && overrideFor != null && selected[overrideFor] && (
+            <OverrideModal account={accounts.find((a) => a.id === overrideFor)} row={selected[overrideFor]} pages={pages} videos={videos} goal={goal} onClose={() => setOverrideFor(null)} onChange={(p) => patch(overrideFor, p)} />
+          )}
           <Modal
             open={confirming}
             onClose={() => setConfirming(false)}
@@ -396,7 +584,7 @@ export function EasyAdsPage() {
             <p className="text-sm text-ink-2">
               The panel will create {p?.rows.length} campaign{p?.rows.length === 1 ? '' : 's'}, each with one ad set and one ad, in your account order. Everything is created <b>PAUSED</b>, so nothing spends until you switch it on in Ads Manager.
             </p>
-            <p className="mt-2 text-sm text-ink-2">{kind === 'lifetime' ? 'Total lifetime budget' : 'Total daily budget'} once switched on: <b>{p?.totals.map((t: any) => money(t.total, t.currency)).join(' + ')}</b>{kind === 'lifetime' && p?.days ? ` over ${p.days} days` : ''}. {hoursOn && kind === 'lifetime' ? `Ads show only ${from}–${to} each day.` : ''} No Advantage+ changes to the video, caption or headline.</p>
+            <p className="mt-2 text-sm text-ink-2">{kind === 'lifetime' ? 'Total lifetime budget' : 'Total daily budget'} once switched on: <b>{p?.totals.map((t: any) => money(t.total, t.currency)).join(' + ')}</b>{kind === 'lifetime' && p?.days ? ` over ${p.days} days` : ''}. {hoursOn && kind === 'lifetime' ? `Ads show only ${from}–${to} each day.` : ''} {enhancements ? 'Advantage+ creative enhancements are allowed.' : 'No Advantage+ changes to the video, caption or headline.'}</p>
             {launch.error && <div className="mt-3"><ErrorAlert error={launch.error} /></div>}
           </Modal>
           <p className="mb-6 flex items-center gap-1.5 text-xs text-ink-3"><FileSpreadsheet className="size-3.5" /> Sheet columns: account, budget, age_min, age_max, page, video, caption, title, phone_or_website. Accounts can be written as “DE 154”. Leave a cell empty to use this page’s value.</p>

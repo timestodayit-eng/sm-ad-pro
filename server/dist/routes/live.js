@@ -13,7 +13,7 @@ import { fundsInfo } from '../services/funds.js';
 import { accountScope } from './meta.js';
 export const liveRouter = Router();
 export const HISTORY_DAYS = 90;
-const PRESETS = ['today', 'yesterday', 'today_yesterday', '7d', '14d', '30d', 'this_month', 'last_month', 'custom'];
+export const PRESETS = ['today', 'yesterday', 'today_yesterday', '7d', '14d', '30d', 'this_month', 'last_month', 'custom'];
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const periodQuery = z
     .object({ period: z.enum(PRESETS).default('today'), since: dateStr.optional(), until: dateStr.optional() })
