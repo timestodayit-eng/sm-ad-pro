@@ -5,7 +5,7 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.7.0)
+## What works in this release (0.8.0)
 
 | Area | State |
 | --- | --- |
@@ -29,7 +29,13 @@ Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScrip
 | AI Analytics: findings computed by the panel's code from synced data (spend spikes, stalled delivery, spend without results, expensive or cheap results against the other accounts, low balance, rejected ads, failed launches), each with the numbers behind it, likely causes, confidence and a link; optional one-paragraph explanation by the assistant in Bengali or English | Built and tested; findings work without an AI key |
 | AI Ads Copilot: chat in Bengali, Banglish or English about accounts, campaigns, balances, findings, launches and notifications; every number comes from the panel's data through tools, never guessed; budget changes come back as a proposal card that goes through the same preview and confirm as the Budgets page | Built, tested with a recorded assistant; needs `OPENAI_API_KEY` and `OPENAI_MODEL` in the hosting settings; **not yet run against the real OpenAI API** |
 | AI Documents: performance reports built from synced data (overview, accounts, campaigns, money left, findings) with an assistant-written summary and recommendations marked as such; edit in the panel, every save is a new version, export as PDF or Word | Built and tested; the assistant parts need the OpenAI settings, the tables do not |
-| Pause/resume, scheduled reports, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
+| Audience Manager: audiences saved once (countries, ages, gender, places with radius, exclusions, interests, behaviours, languages, devices, Advantage+ audience) and loaded into Easy Ads or Advanced Ads; Meta's own reach estimate per account; Employment rules checked before saving | Built and tested against recorded Meta responses |
+| Placements: saved sets of manual placements loaded into any launch | Built and tested |
+| Custom Reports: any working accounts, any period, rows by account, campaign, ad, day or month, the metrics you pick (spend, impressions, clicks, link clicks, leads, calls, messages, results, CTR, CPC, CPM, cost per lead/call/message/result), sortable, totals per currency, saved reports, CSV export; no account or row limit beyond what was synced | Built and tested |
+| Finance: spend by account, currency and period; money left as Meta reports it; top-ups and other entries logged by hand; last 6 months by currency; BDT totals only at a rate you typed in, shown with its date; CSV export | Built and tested |
+| Monitoring: every 30 minutes the scheduler runs the AI Analytics checks plus stale-sync and expiring-login checks for every organisation and writes one notification per finding per day; settings for which checks and severities alert; Scan now; history of runs | Built and tested |
+| Comments: comments on each Page's recent posts (ads included) read live from Meta, reply and hide through the Page token, an assistant-drafted reply that is only sent when you press Send, a log of what the panel did; needs the Meta login reconnected with `pages_read_user_content` and `pages_manage_engagement` | Built, tested against recorded Meta responses; **not yet verified on a live Page** |
+| Pause/resume, scheduled report delivery, Telegram/WhatsApp alerts, creative leaderboard, budget pacing | Not built yet |
 
 The panel never shows sample data. Pages for modules that are not built say so instead of showing fake numbers or buttons.
 

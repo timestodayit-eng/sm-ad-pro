@@ -7,7 +7,7 @@ import { graph, graphBase, graphPaged, MetaApiError } from './graph.js';
 
 /** Facebook Login for Business + account import. Tokens are encrypted at rest and never sent to the browser. */
 
-export const REQUESTED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement'];
+export const REQUESTED_SCOPES = ['ads_management', 'ads_read', 'business_management', 'pages_show_list', 'pages_read_engagement', 'pages_read_user_content', 'pages_manage_engagement'];
 
 function requireMeta() {
   if (!features().meta) {

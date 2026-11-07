@@ -5,6 +5,7 @@ import { inspectToken, decryptConnectionToken, syncConnection } from '../meta/co
 import { MetaApiError } from '../meta/graph.js';
 import { syncManagedAccounts } from '../meta/live.js';
 import { runLaunchItem } from '../services/launch.js';
+import { scanAll } from '../services/monitoring.js';
 import { enqueue } from './queue.js';
 import { JobError, registerHandler } from './scheduler.js';
 
@@ -90,6 +91,9 @@ export function registerCoreHandlers() {
 
   /** Easy Ads: builds one account's campaign, ad set and ad (all PAUSED), one stage at a time. */
   registerHandler('launch.item', (job, ctx) => runLaunchItem(job, ctx));
+
+  /** Every 30 minutes: Monitoring scan for every organisation, findings become notifications once a day. */
+  registerHandler('monitor.scan', () => scanAll());
 
   registerHandler('maintenance.cleanup_sessions', async () => {
     await execute(`DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP(3)`);

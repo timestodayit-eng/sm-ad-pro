@@ -85,7 +85,7 @@ describe('AI Copilot, documents and exports', () => {
       { role: 'assistant', content: null, tool_calls: [{ id: 'c2', type: 'function', function: { name: 'propose_budget_change', arguments: '{"mode":"stepped","start":30,"step":5,"reason":"DE 168 gets cheaper calls"}' } }] },
       { role: 'assistant', content: 'গত ৭ দিনে DE 168 খরচ করেছে USD 140 আর DE 154 USD 70। বাজেট প্ল্যান দেখানো হলো, এখনো কিছু বদলানো হয়নি।' },
     ];
-    const res = await agent.post('/api/ai/conversations/new/messages').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'গত সপ্তাহে কোন অ্যাকাউন্ট বেশি খরচ করেছে? বাজেট বাড়াও' });
+    const res = await agent.post('/api/ai/conversations/new/messages?wait=1').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'গত সপ্তাহে কোন অ্যাকাউন্ট বেশি খরচ করেছে? বাজেট বাড়াও' });
     expect(res.status).toBe(200);
     expect(res.body.toolsUsed).toEqual(['get_accounts', 'propose_budget_change']);
     // the key goes only to the configured base URL, and tools are offered
@@ -109,12 +109,37 @@ describe('AI Copilot, documents and exports', () => {
 
   it('refuses a viewer and explains an OpenAI key problem', async () => {
     const v = await signIn(app, 'viewer@example.test', pw);
-    expect((await v.agent.post('/api/ai/conversations/new/messages').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', v.csrf).send({ content: 'hi' })).status).toBe(403);
+    expect((await v.agent.post('/api/ai/conversations/new/messages?wait=1').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', v.csrf).send({ content: 'hi' })).status).toBe(403);
     const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
     script = [{ status: 401, body: { error: { message: 'Incorrect API key provided' } } }];
-    const res = await agent.post('/api/ai/conversations/new/messages').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'hello' });
+    const res = await agent.post('/api/ai/conversations/new/messages?wait=1').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'hello' });
     expect(res.status).toBe(502);
     expect(res.body.error).toMatchObject({ code: 'AI_AUTH', hint: 'Check OPENAI_API_KEY in the hosting settings.' });
+  });
+
+  it('answers in the background: the request returns at once and the panel polls for the answer or the error', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    script = [{ role: 'assistant', content: 'Nothing is spending today.' }];
+    const res = await agent.post('/api/ai/conversations/new/messages').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'anything spending?' });
+    expect(res.status).toBe(200);
+    expect(res.body.pending).toBe(true);
+    let conv: any;
+    for (let i = 0; i < 50; i++) {
+      conv = (await agent.get(`/api/ai/conversations/${res.body.conversationId}`)).body;
+      if (!conv.pending && conv.messages.length === 2) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(conv.messages.map((m: any) => [m.role, m.content, m.error])).toEqual([['user', 'anything spending?', false], ['assistant', 'Nothing is spending today.', false]]);
+    // a model failure lands in the conversation, marked as an error, instead of a lost request
+    script = [{ status: 429, body: { error: { message: 'quota' } } }];
+    const r2 = await agent.post(`/api/ai/conversations/${res.body.conversationId}/messages`).set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ content: 'again' });
+    expect(r2.body.pending).toBe(true);
+    for (let i = 0; i < 50; i++) {
+      conv = (await agent.get(`/api/ai/conversations/${res.body.conversationId}`)).body;
+      if (!conv.pending && conv.messages.length === 4) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(conv.messages.at(-1)).toMatchObject({ role: 'assistant', error: true, content: expect.stringContaining('rate-limiting') });
   });
 
   it('lists findings from synced data without calling the model', async () => {

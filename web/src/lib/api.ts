@@ -47,7 +47,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   } catch {
     throw new ApiError(res.status, { code: 'BAD_RESPONSE', message: `The server returned an unexpected response (HTTP ${res.status}).`, hint: 'The app may be mid-deploy. Wait a minute and refresh.' });
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? { code: `HTTP_${res.status}`, message: `Request failed (HTTP ${res.status}).` });
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? { code: `HTTP_${res.status}`, message: res.status === 502 || res.status === 504 ? 'The hosting proxy cut the request before the app answered (HTTP ' + res.status + '). The app may be restarting, or the request took too long. Try again in a moment.' : res.status === 503 ? 'The app is not running or is still starting (HTTP 503). Try again in a minute.' : `Request failed (HTTP ${res.status}).` });
   return data as T;
 }
 

@@ -13,6 +13,12 @@ import { AccountGroupsPage } from './pages/Groups';
 import { LoginPage, SetupPage } from './pages/Auth';
 import { ComingSoonPage } from './pages/ComingSoon';
 import { AdvancedAdsPage, EasyAdsPage } from './pages/EasyAds';
+import { AudiencesPage } from './pages/Audiences';
+import { PlacementsPage } from './pages/Placements';
+import { ReportsPage } from './pages/Reports';
+import { FinancePage } from './pages/Finance';
+import { MonitoringPage } from './pages/Monitoring';
+import { CommentsPage } from './pages/Comments';
 import { PublishingPage } from './pages/Publishing';
 import { CopilotPage } from './pages/Copilot';
 import { AiAnalyticsPage } from './pages/AiAnalytics';
@@ -63,6 +69,12 @@ const BUILT: Record<string, ReactNode> = {
   '/campaigns': <CampaignsPage />,
   '/easy-ads': <EasyAdsPage />,
   '/advanced-ads': <AdvancedAdsPage />,
+  '/audiences': <AudiencesPage />,
+  '/placements': <PlacementsPage />,
+  '/reports': <ReportsPage />,
+  '/finance': <FinancePage />,
+  '/monitoring': <MonitoringPage />,
+  '/comments': <CommentsPage />,
   '/publishing': <PublishingPage />,
   '/budgets': <BudgetsPage />,
   '/copilot': <CopilotPage />,

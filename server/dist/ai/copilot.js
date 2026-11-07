@@ -1,5 +1,6 @@
 import { execute, query, queryOne } from '../db/pool.js';
 import { AppError } from '../lib/errors.js';
+import { logger } from '../lib/logger.js';
 import { can } from '../auth/rbac.js';
 import { planBudgets } from '../routes/budgets.js';
 import { accountSummaries, AI_PERIODS, balanceSummaries, campaignSummaries, recentLaunches, recentNotifications } from './data.js';
@@ -114,8 +115,8 @@ export async function getConversation(user, id) {
         throw new AppError({ code: 'NOT_FOUND', message: 'Conversation was not found.', status: 404, category: 'not_found' });
     const rows = await query(`SELECT id, role, content, tool_name, proposal, created_at FROM ai_messages WHERE conversation_id=? ORDER BY id`, [id]);
     return {
-        id, title: c.title, createdAt: c.created_at,
-        messages: rows.filter((m) => m.role === 'user' || (m.role === 'assistant' && (m.content || m.proposal))).map((m) => ({ id: Number(m.id), role: m.role, content: m.content, proposal: typeof m.proposal === 'string' ? JSON.parse(m.proposal) : m.proposal, at: m.created_at })),
+        id, title: c.title, createdAt: c.created_at, pending: running.has(id),
+        messages: rows.filter((m) => m.role === 'user' || (m.role === 'assistant' && (m.content || m.proposal))).map((m) => ({ id: Number(m.id), role: m.role, content: m.content, proposal: typeof m.proposal === 'string' ? JSON.parse(m.proposal) : m.proposal, error: m.tool_name === 'error', at: m.created_at })),
     };
 }
 async function history(conversationId) {
@@ -124,6 +125,8 @@ async function history(conversationId) {
     for (const r of rows) {
         if (r.role === 'tool')
             out.push({ role: 'tool', content: r.content ?? '', tool_call_id: r.tool_call_id, name: r.tool_name });
+        else if (r.role === 'assistant' && r.tool_name === 'error')
+            continue;
         else if (r.role === 'assistant')
             out.push({ role: 'assistant', content: r.content, ...(r.tool_calls ? { tool_calls: typeof r.tool_calls === 'string' ? JSON.parse(r.tool_calls) : r.tool_calls } : {}) });
         else
@@ -135,18 +138,27 @@ async function history(conversationId) {
         trimmed = trimmed.slice(1);
     return trimmed;
 }
-/** Handles one user message: runs the model with tools until it answers. Returns the new visible messages. */
-export async function sendMessage(user, conversationId, content, assistantName, now = new Date()) {
+/** Conversations whose answer is being worked on right now (in this process). */
+const running = new Map();
+export const isAnswering = (conversationId) => running.has(conversationId);
+/** Saves the user's message (and opens the conversation if needed). Returns the conversation id. */
+async function beginMessage(user, conversationId, content) {
     let id = conversationId;
     if (id) {
         const c = await queryOne(`SELECT id FROM ai_conversations WHERE id=? AND org_id=? AND user_id=?`, [id, user.orgId, user.id]);
         if (!c)
             throw new AppError({ code: 'NOT_FOUND', message: 'Conversation was not found.', status: 404, category: 'not_found' });
+        if (running.has(id))
+            throw new AppError({ code: 'AI_BUSY', message: 'The assistant is still answering your last message.', status: 409, category: 'validation' });
     }
     else {
         id = (await execute(`INSERT INTO ai_conversations (org_id, user_id, title) VALUES (?,?,?)`, [user.orgId, user.id, content.slice(0, 80)])).insertId;
     }
     await execute(`INSERT INTO ai_messages (conversation_id, role, content) VALUES (?, 'user', ?)`, [id, content]);
+    return id;
+}
+/** Runs the model with tools until it answers. Returns the new visible messages. */
+async function runAssistant(user, id, assistantName, now) {
     const messages = [{ role: 'system', content: systemPrompt(user, assistantName, now) }, ...(await history(id))];
     const visible = [];
     let toolCallsUsed = [];
@@ -189,7 +201,30 @@ export async function sendMessage(user, conversationId, content, assistantName, 
         break;
     }
     await execute(`UPDATE ai_conversations SET updated_at=CURRENT_TIMESTAMP(3) WHERE id=?`, [id]);
-    return { conversationId: id, messages: visible, toolsUsed: [...new Set(toolCallsUsed)] };
+    return { messages: visible, toolsUsed: [...new Set(toolCallsUsed)] };
+}
+/** Handles one user message and waits for the answer. Used by tests and by the wait=1 form of the route. */
+export async function sendMessage(user, conversationId, content, assistantName, now = new Date()) {
+    const id = await beginMessage(user, conversationId, content);
+    const r = await runAssistant(user, id, assistantName, now);
+    return { conversationId: id, ...r };
+}
+/**
+ * Handles one user message without holding the HTTP request open: the answer is written to the conversation when
+ * it is ready and the panel polls for it. Hosting proxies cut long requests (502), and a model call with tools can
+ * take longer than they allow. A failure is saved into the conversation as a message marked as an error.
+ */
+export async function sendMessageInBackground(user, conversationId, content, assistantName) {
+    const id = await beginMessage(user, conversationId, content);
+    const job = runAssistant(user, id, assistantName, new Date())
+        .catch(async (err) => {
+        const text = err instanceof AppError ? `${err.message}${err.hint ? ` ${err.hint}` : ''}` : `The assistant could not answer: ${String(err?.message ?? err).slice(0, 300)}`;
+        logger.warn({ err: err?.code ?? err?.message, conversationId: id }, 'copilot answer failed');
+        await execute(`INSERT INTO ai_messages (conversation_id, role, content, tool_name) VALUES (?, 'assistant', ?, 'error')`, [id, text]).catch(() => { });
+    })
+        .finally(() => running.delete(id));
+    running.set(id, job);
+    return { conversationId: id, pending: true };
 }
 /** One short explanation of the findings, in the user's language, with no new numbers. */
 export async function explainFindings(user, period, groupId, language, assistantName) {

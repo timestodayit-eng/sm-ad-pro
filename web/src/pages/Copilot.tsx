@@ -48,7 +48,7 @@ export function CopilotPage() {
   const status = useQuery({ queryKey: ['ai', 'status'], queryFn: () => get('/ai/status') });
   const list = useQuery({ queryKey: ['ai', 'conversations'], queryFn: () => get('/ai/conversations') });
   const [current, setCurrent] = useState<number | null>(null);
-  const conv = useQuery({ queryKey: ['ai', 'conversation', current], queryFn: () => get(`/ai/conversations/${current}`), enabled: current != null });
+  const conv = useQuery({ queryKey: ['ai', 'conversation', current], queryFn: () => get(`/ai/conversations/${current}`), enabled: current != null, refetchInterval: (q) => (q.state.data?.pending ? 1500 : false) });
   const [text, setText] = useState('');
   const [pending, setPending] = useState<any[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
@@ -64,10 +64,12 @@ export function CopilotPage() {
     onError: () => setPending([]),
   });
   const messages: any[] = [...(conv.data?.messages ?? []), ...pending];
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [messages.length, send.isPending]);
+  const waiting = send.isPending || Boolean(conv.data?.pending);
+  const unanswered = !waiting && messages.length > 0 && messages.at(-1)?.role === 'user';
+  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [messages.length, waiting]);
   const name = status.data?.assistantName ?? 'AI Ads Copilot';
   const configured = status.data?.configured;
-  const submit = () => { const t = text.trim(); if (!t || send.isPending) return; setText(''); send.mutate(t); };
+  const submit = () => { const t = text.trim(); if (!t || waiting) return; setText(''); send.mutate(t); };
 
   return (
     <>
@@ -94,16 +96,17 @@ export function CopilotPage() {
             ) : messages.map((m) => (
               <div key={m.id} className={cx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                 {m.proposal ? <div className="w-full max-w-2xl"><Proposal p={m.proposal} onApplied={() => qc.invalidateQueries({ queryKey: ['budgets'] })} /></div>
-                  : <div className={cx('max-w-2xl rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap', m.role === 'user' ? 'bg-brand text-white' : 'bg-surface-2 text-ink')}>{m.content}</div>}
+                  : <div className={cx('max-w-2xl rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap', m.role === 'user' ? 'bg-brand text-white' : m.error ? 'border border-warn/40 bg-warn-bg text-ink' : 'bg-surface-2 text-ink')}>{m.error ? 'The assistant could not answer. ' : ''}{m.content}</div>}
               </div>
             ))}
-            {send.isPending && <div className="flex justify-start"><div className="rounded-2xl bg-surface-2 px-4 py-2.5 text-sm text-ink-3">Reading your data…</div></div>}
+            {waiting && <div className="flex justify-start"><div className="rounded-2xl bg-surface-2 px-4 py-2.5 text-sm text-ink-3">Reading your data…</div></div>}
+            {unanswered && <p className="text-xs text-ink-3">No answer was saved for the last message (the app may have restarted). Send it again.</p>}
             {send.error && <ErrorAlert error={send.error} />}
             <div ref={bottom} />
           </div>
           <form className="flex items-end gap-2 border-t border-line p-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
             <textarea className="min-h-[44px] flex-1 resize-none rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-3 focus:border-brand focus:outline-none" rows={2} placeholder={configured === false ? 'Not configured yet' : 'Ask about spend, results, balances, launches… (Enter to send, Shift+Enter for a new line)'} value={text} disabled={configured === false} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }} maxLength={4000} />
-            <Button type="submit" icon={<Send className="size-4" />} loading={send.isPending} disabled={!text.trim() || configured === false}>Send</Button>
+            <Button type="submit" icon={<Send className="size-4" />} loading={waiting} disabled={!text.trim() || configured === false || waiting}>Send</Button>
           </form>
         </Card>
       </div>

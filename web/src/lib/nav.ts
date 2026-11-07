@@ -58,8 +58,8 @@ export const NAV: NavGroup[] = [
       { to: '/balance', label: 'balance', icon: Landmark },
       { to: '/accounts', label: 'adAccounts', icon: Building2 },
       { to: '/account-groups', label: 'accountGroups', icon: FolderKanban },
-      { to: '/audiences', label: 'audiences', icon: Target, phase: 5, summary: 'Broad, Advantage+, saved, custom and lookalike audiences, filtered automatically by the Employment category restrictions.' },
-      { to: '/placements', label: 'placements', icon: Layers, phase: 5, summary: 'Automatic or manual placements (Feeds, Stories, Reels, Messenger, Audience Network), showing only combinations Meta accepts.' },
+      { to: '/audiences', label: 'audiences', icon: Target },
+      { to: '/placements', label: 'placements', icon: Layers },
       { to: '/media', label: 'media', icon: Film, perm: 'media.read' },
     ],
   },
@@ -74,15 +74,15 @@ export const NAV: NavGroup[] = [
   {
     label: 'grpReports',
     items: [
-      { to: '/reports', label: 'reports', icon: BarChart3, phase: 6, summary: 'Any accounts, dimensions, metrics and date ranges, with saved templates, schedules and CSV/XLSX/PDF export. No 12-account or 250-ad limits.' },
-      { to: '/finance', label: 'finance', icon: Wallet, phase: 6, summary: 'Spend by account, currency and period, with BDT conversion at a stated, dated rate.' },
-      { to: '/monitoring', label: 'monitoring', icon: Radar, phase: 7, summary: 'Scheduled analyses and alerts: spend spikes, rejected ads, stalled delivery, expiring tokens.' },
+      { to: '/reports', label: 'reports', icon: BarChart3 },
+      { to: '/finance', label: 'finance', icon: Wallet },
+      { to: '/monitoring', label: 'monitoring', icon: Radar },
     ],
   },
   {
     label: 'grpSystem',
     items: [
-      { to: '/comments', label: 'comments', icon: MessageSquare, phase: 9, summary: 'Read, reply to and hide Page comments where Meta permits, with AI reply suggestions that need approval before sending.' },
+      { to: '/comments', label: 'comments', icon: MessageSquare },
       { to: '/notifications', label: 'notifications', icon: Bell },
       { to: '/health', label: 'health', icon: Activity },
       { to: '/settings', label: 'settings', icon: Settings },

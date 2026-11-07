@@ -1,18 +1,18 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Download, FileSpreadsheet, Globe, Phone, Rocket, Search, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorAlert, Field, Input, Modal, PageHeader, Segmented, Select, Skeleton, cx } from '../components/ui';
 import { get, post } from '../lib/api';
 import { usePageTitle, useSession } from '../lib/session';
 import { money } from './Live';
 
 type Row = { accountRowId: number; pageId?: string; dailyBudget?: number; mediaAssetId?: number; caption?: string; title?: string; link?: string; ageMin?: number; ageMax?: number; customAudiences?: { include: string[]; exclude: string[] } };
-type Named = { key: string; name: string; type?: string; detail?: string; countryCode?: string; radius?: number; audience?: number | null };
+export type Named = { key: string; name: string; type?: string; detail?: string; countryCode?: string; radius?: number; audience?: number | null };
 type SearchType = 'location' | 'interest' | 'behavior' | 'locale';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function useDebounced<T>(v: T, ms = 350) {
+export function useDebounced<T>(v: T, ms = 350) {
   const [d, setD] = useState(v);
   useEffect(() => {
     const id = setTimeout(() => setD(v), ms);
@@ -40,7 +40,7 @@ function Section({ n, title, children, description }: { n: number; title: string
 }
 
 /** Type a word, pick from Meta's own list. Nothing here is typed from memory: every key comes from Meta's search. */
-function Picker({ type, label, hint, value, onChange, placeholder, radius }: { type: SearchType; label: string; hint?: string; value: Named[]; onChange: (v: Named[]) => void; placeholder?: string; radius?: boolean }) {
+export function Picker({ type, label, hint, value, onChange, placeholder, radius }: { type: SearchType; label: string; hint?: string; value: Named[]; onChange: (v: Named[]) => void; placeholder?: string; radius?: boolean }) {
   const [q, setQ] = useState('');
   const dq = useDebounced(q.trim(), 300);
   const res = useQuery({ queryKey: ['launch', 'search', type, dq], queryFn: () => get(`/launch/search?type=${type}&q=${encodeURIComponent(dq)}`), enabled: dq.length > 0 || type === 'behavior', staleTime: 60_000 });
@@ -195,6 +195,35 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
   const [urlTags, setUrlTags] = useState('');
   const [enhancements, setEnhancements] = useState(false);
   const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  // Saved audiences and placement sets (Audience Manager, Placements pages); ?audience= / ?placements= preload one.
+  const [sp] = useSearchParams();
+  const savedAudiences = useQuery({ queryKey: ['audiences'], queryFn: () => get('/audiences') });
+  const savedPlacements = useQuery({ queryKey: ['placement-sets'], queryFn: () => get('/placement-sets') });
+  const [audienceId, setAudienceId] = useState(sp.get('audience') ?? '');
+  const [placementSetId, setPlacementSetId] = useState(sp.get('placements') ?? '');
+  const [savingAudience, setSavingAudience] = useState(false);
+  const [audienceName, setAudienceName] = useState('');
+  const loadAudience = (id: string) => {
+    setAudienceId(id);
+    const a = (savedAudiences.data?.items ?? []).find((x: any) => String(x.id) === id);
+    if (!a) return;
+    const sp2 = a.spec;
+    setCountries(sp2.countries.join(', ')); setAgeMin(String(sp2.ageMin)); setAgeMax(String(sp2.ageMax)); setGenders(sp2.genders); setAdvantage(Boolean(sp2.advantageAudience)); setSpecial(a.specialCategory);
+    const adv = sp2.advanced ?? {};
+    setLocIn(adv.locations?.include ?? []); setLocOut(adv.locations?.exclude ?? []); setLocTypes(adv.locations?.types ?? ['home', 'recent']);
+    setInterests(adv.interests ?? []); setBehaviors(adv.behaviors ?? []); setExInterests(adv.excludedInterests ?? []); setLocales(adv.locales ?? []); setDevices(adv.devicePlatforms ?? ['mobile', 'desktop']); setUserOs(adv.userOs ?? []);
+  };
+  const loadPlacementSet = (id: string) => {
+    setPlacementSetId(id);
+    const ps = (savedPlacements.data?.items ?? []).find((x: any) => String(x.id) === id);
+    if (ps) setPlacements(ps.placements);
+  };
+  useEffect(() => { if (audienceId && savedAudiences.data) loadAudience(audienceId); }, [savedAudiences.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (placementSetId && savedPlacements.data) loadPlacementSet(placementSetId); }, [savedPlacements.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveAudience = useMutation({
+    mutationFn: () => post('/audiences', { name: audienceName.trim(), specialCategory: special, spec: { countries: countries.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c)), ageMin: Number(ageMin) || 18, ageMax: Number(ageMax) || 65, genders, advantageAudience: advantage, advanced: { locations: { include: locIn, exclude: locOut, types: locTypes }, interests, behaviors, excludedInterests: exInterests, locales, devicePlatforms: devices, userOs } } }),
+    onSuccess: (r: any) => { setSavingAudience(false); setAudienceName(''); savedAudiences.refetch(); setAudienceId(String(r.id)); },
+  });
 
   useEffect(() => {
     setOptimize(goal === 'call' ? 'calls' : 'clicks');
@@ -411,6 +440,13 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
           </Section>
 
           <Section n={4} title="Audience and placements" description="Fixed placements: the ad shows only where you tick. Advantage+ placements are never used.">
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <Field label="Saved audience" hint={advanced ? 'Fills every field below. You can still change them.' : 'Fills countries, age and gender. Places and interests need Advanced Ads.'}>
+                <Select className="w-64" value={audienceId} onChange={(e) => loadAudience(e.target.value)} aria-label="Saved audience"><option value="">None, set it here…</option>{(savedAudiences.data?.items ?? []).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</Select>
+              </Field>
+              {advanced && <Button variant="secondary" onClick={() => setSavingAudience(true)}>Save this audience…</Button>}
+              <Link to="/audiences" className="pb-2.5 text-sm font-medium text-brand hover:underline">Audience Manager →</Link>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Countries" hint={COUNTRY_HINT}><Input value={countries} onChange={(e) => setCountries(e.target.value)} /></Field>
               <Field label="Age (unless set per account above)">
@@ -462,7 +498,11 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
               </div>
             )}
             <div className="mt-5">
-              <div className="mb-2 text-sm font-medium text-ink">Placements</div>
+              <div className="mb-2 flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-ink">Placements</span>
+                <Select className="h-8 w-56" value={placementSetId} onChange={(e) => loadPlacementSet(e.target.value)} aria-label="Saved placement set"><option value="">Saved set…</option>{(savedPlacements.data?.items ?? []).map((ps: any) => <option key={ps.id} value={ps.id}>{ps.name}</option>)}</Select>
+                <Link to="/placements" className="text-xs font-medium text-brand hover:underline">Placements page →</Link>
+              </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {(setup.data?.placements ?? []).map((pl: any) => {
                   const cur: string[] = placements ?? setup.data?.defaultPlacements ?? [];
@@ -572,6 +612,11 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
             )}
           </Section>
 
+          <Modal open={savingAudience} onClose={() => setSavingAudience(false)} title="Save this audience" footer={<><Button variant="ghost" onClick={() => setSavingAudience(false)}>Cancel</Button><Button loading={saveAudience.isPending} disabled={!audienceName.trim()} onClick={() => saveAudience.mutate()}>Save</Button></>}>
+            <Field label="Name"><Input value={audienceName} onChange={(e) => setAudienceName(e.target.value)} maxLength={120} placeholder="e.g. Dhaka men 25–45" /></Field>
+            <p className="mt-2 text-xs text-ink-3">Saves countries, age, gender, places, interests, behaviours, languages and devices for reuse in any launch. Custom audiences stay per account.</p>
+            {saveAudience.error && <div className="mt-3"><ErrorAlert error={saveAudience.error} /></div>}
+          </Modal>
           {advanced && overrideFor != null && selected[overrideFor] && (
             <OverrideModal account={accounts.find((a) => a.id === overrideFor)} row={selected[overrideFor]} pages={pages} videos={videos} goal={goal} onClose={() => setOverrideFor(null)} onChange={(p) => patch(overrideFor, p)} />
           )}

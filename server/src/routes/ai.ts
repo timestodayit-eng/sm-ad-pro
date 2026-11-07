@@ -5,7 +5,7 @@ import { asyncHandler, idParam, parse } from '../lib/http.js';
 import { requirePermission } from '../auth/sessions.js';
 import { audit } from '../services/audit.js';
 import { AI_PERIODS } from '../ai/data.js';
-import { explainFindings, getConversation, listConversations, sendMessage } from '../ai/copilot.js';
+import { explainFindings, getConversation, listConversations, sendMessage, sendMessageInBackground } from '../ai/copilot.js';
 import { findings } from '../ai/findings.js';
 import { createDocument, deleteDocument, getDocument, listDocuments, renderDocx, renderPdf, saveVersion } from '../ai/documents.js';
 import { aiConfigured } from '../ai/openai.js';
@@ -30,7 +30,10 @@ aiRouter.post(
     const { content } = parse(z.object({ content: z.string().trim().min(1, 'Write a message.').max(4000) }), req.body ?? {});
     const idRaw = req.params.id;
     const id = idRaw === 'new' ? null : parse(idParam, idRaw);
-    res.json(await sendMessage(req.user!, id, content, await assistantName(req.user!.orgId)));
+    const name = await assistantName(req.user!.orgId);
+    // wait=1 keeps the request open until the answer (tests, scripts). The panel polls instead, so a slow model
+    // call can never be cut off by the hosting proxy.
+    res.json(req.query.wait === '1' ? await sendMessage(req.user!, id, content, name) : await sendMessageInBackground(req.user!, id, content, name));
   }),
 );
 

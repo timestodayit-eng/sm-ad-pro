@@ -45,7 +45,7 @@ describe('Meta sync without business_management', () => {
     const accts = await query(`SELECT account_id, business_id FROM meta_ad_accounts WHERE connection_id=?`, [connectionId]);
     expect(accts).toEqual([{ account_id: '111', business_id: null }]);
     const [c] = await listConnections(orgId);
-    expect(c.missing_scopes).toEqual(['business_management']);
+    expect(c.missing_scopes).toEqual(['business_management', 'pages_read_user_content', 'pages_manage_engagement']);
   });
 
   it('still fails on other errors', async () => {
