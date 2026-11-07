@@ -64,7 +64,7 @@ export function CampaignsPage() {
       <Card>
         <CardHeader
           title={d ? `${num(items.length)} campaign${items.length === 1 ? '' : 's'}` : 'Campaigns'}
-          description="Pausing, resuming and budget changes come in the next release, each with a confirm step."
+          description={<>Change ad set budgets on the <Link to="/budgets" className="text-brand hover:underline">Budgets</Link> page. Pausing and resuming come next.</>}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">

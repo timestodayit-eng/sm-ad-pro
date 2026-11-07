@@ -15,6 +15,9 @@ const AD_STATUSES = [
 ];
 /** Currencies Meta stores without minor units (offset 1). Everything else uses offset 100. */
 const OFFSET_ONE = new Set(['CLP', 'COP', 'CRC', 'HUF', 'ISK', 'IDR', 'JPY', 'KRW', 'PYG', 'TWD', 'VND']);
+export function majorToMinor(major, currency) {
+    return Math.round(major * (OFFSET_ONE.has(currency) ? 1 : 100));
+}
 export function minorToMajor(minor, currency) {
     if (minor == null || minor === '')
         return null;
@@ -98,6 +101,39 @@ export function addDays(date, days) {
     d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
 }
+/**
+ * Balance, amount owed, spending limit and payment method. A permission or validation problem here is recorded on
+ * the account and does not stop the rest of the sync; an expired token or rate limit does.
+ */
+async function syncAccountFunds(rowId, act, currency, token) {
+    try {
+        const { data: a } = await graph({
+            path: act,
+            params: { fields: 'balance,amount_spent,spend_cap,is_prepay_account,funding_source_details' },
+            accessToken: token,
+            operation: 'meta.live.funds',
+        });
+        const fsd = a.funding_source_details ?? {};
+        const { parseFundsDisplay } = await import('../services/funds.js');
+        const prepay = a.is_prepay_account == null ? null : a.is_prepay_account ? 1 : 0;
+        await execute(`UPDATE meta_ad_accounts SET balance_minor=?, amount_spent_minor=COALESCE(?, amount_spent_minor), spend_cap_minor=?, is_prepay=?, funding_type=?,
+              funding_display=?, prepaid_funds_minor=?, funds_checked_at=NOW(3), funds_error=NULL WHERE id=?`, [
+            a.balance != null ? Number(a.balance) : null,
+            a.amount_spent != null ? Number(a.amount_spent) : null,
+            a.spend_cap != null && a.spend_cap !== '0' ? Number(a.spend_cap) : null,
+            prepay,
+            fsd.type != null ? Number(fsd.type) : null,
+            fsd.display_string ? String(fsd.display_string).slice(0, 255) : null,
+            prepay ? parseFundsDisplay(fsd.display_string, currency) : null,
+            rowId,
+        ]);
+    }
+    catch (err) {
+        if (err instanceof MetaApiError && (err.meta.class === 'auth' || err.meta.class === 'rate_limited'))
+            throw err;
+        await execute(`UPDATE meta_ad_accounts SET funds_error=?, funds_checked_at=NOW(3) WHERE id=?`, [String(err.message).slice(0, 500), rowId]);
+    }
+}
 async function bulkUpsert(sqlHead, sqlTail, rows) {
     for (let i = 0; i < rows.length; i += 500)
         await execute(`${sqlHead} VALUES ? ${sqlTail}`, [rows.slice(i, i + 500)]);
@@ -115,6 +151,7 @@ export async function syncAccountLive(rowId, opts = {}) {
     const act = `act_${acc.account_id}`;
     const started = new Date();
     try {
+        await syncAccountFunds(rowId, act, acc.currency, token);
         const campaigns = await graphPaged({
             path: `${act}/campaigns`,
             params: { fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget', effective_status: CAMPAIGN_STATUSES },

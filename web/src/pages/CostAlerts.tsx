@@ -12,6 +12,7 @@ const COLS: { key: string; label: string; hint: string }[] = [
   { key: 'max_cost_per_call', label: 'Cost per call', hint: 'For call campaigns' },
   { key: 'max_cost_per_message', label: 'Cost per message', hint: 'For messaging campaigns' },
   { key: 'max_cost_per_result', label: 'Cost per result', hint: 'Any campaign, using its objective result' },
+  { key: 'min_days_left', label: 'Low balance (days)', hint: 'Alert when the funds or spending limit left would last fewer days than this, at the last 7 days’ average spend' },
   { key: 'min_spend', label: 'Check after spend of', hint: 'Do not judge cost per result until a campaign has spent this much today' },
 ];
 
@@ -43,7 +44,7 @@ function LimitRow({ title, sub, currency, limits, inherit, onSave }: { title: st
           <td key={c.key} className="px-2 py-3">
             <Input
               inputMode="decimal"
-              aria-label={`${title}: ${c.label} (${currency})`}
+              aria-label={c.key === 'min_days_left' ? `${title}: ${c.label}` : `${title}: ${c.label} (${currency})`}
               className="h-9 w-[8.5rem] tabular-nums"
               disabled={!can('accounts.manage')}
               placeholder={inherit ? (inherited ? `${inherited} default` : 'default off') : 'off'}
@@ -76,7 +77,7 @@ export function CostAlertsCard() {
       <CardHeader
         title="Cost alerts"
         icon={<BellRing className="size-4" />}
-        description="Get a notification when an account spends too much today, or a campaign’s cost per lead, call, message or result goes above your limit. Checked after every sync, about every 15 minutes, once per campaign per day."
+        description="Get a notification when an account spends too much today, runs low on balance, or a campaign’s cost per lead, call, message or result goes above your limit. Checked after every sync, about every 15 minutes, once per campaign per day."
       />
       {q.error && <div className="p-4"><ErrorAlert error={q.error} /></div>}
       {q.isLoading ? (
@@ -88,7 +89,7 @@ export function CostAlertsCard() {
       ) : (
         <>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-sm">
+            <table className="w-full min-w-[1340px] text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-xs font-semibold tracking-wide text-ink-3 uppercase">
                   <th className="px-5 py-3">Applies to</th>
@@ -115,7 +116,7 @@ export function CostAlertsCard() {
             </table>
           </div>
           <p className="border-t border-line px-5 py-3 text-xs text-ink-3">
-            Amounts are in each account’s currency. Leave a box empty to use the default (or no alert on the default row). Enter 0 on an account to switch that alert off for it. Alerts appear under Notifications; Telegram and WhatsApp delivery comes next.
+            Amounts are in each account’s currency; Low balance is in days. Leave a box empty to use the default (or no alert on the default row). Enter 0 on an account to switch that alert off for it. Alerts appear under Notifications; Telegram and WhatsApp delivery comes next.
           </p>
         </>
       )}

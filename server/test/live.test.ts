@@ -7,6 +7,7 @@ import { setFetchForTests } from '../src/meta/graph.js';
 import { accountToday, addDays, contactCounts, extractPreviewSrc, minorToMajor, primaryResult, syncAccountLive } from '../src/meta/live.js';
 import { periodRange } from '../src/routes/live.js';
 import { effectiveLimits, evaluateCostAlerts, findBreaches } from '../src/services/costAlerts.js';
+import { fundsInfo, parseFundsDisplay } from '../src/services/funds.js';
 import { closePool, freshDb, signIn, TEST_ORIGIN } from './helpers.js';
 
 const META_ENV = {
@@ -80,6 +81,17 @@ describe('live data helpers', () => {
     expect(periodRange('yesterday', 'Asia/Dhaka', now)).toEqual({ since: '2026-11-07', until: '2026-11-07' });
   });
 
+  it('reads prepaid funds only from balance text, never from card digits', () => {
+    expect(parseFundsDisplay('Available balance (BDT 2,450.75)', 'BDT')).toBe(245075);
+    expect(parseFundsDisplay('Prepaid funds: $12.5', 'USD')).toBe(1250);
+    expect(parseFundsDisplay('Visa ···· 1234', 'USD')).toBeNull();
+    expect(parseFundsDisplay('Available balance (¥1,200)', 'JPY')).toBe(1200);
+    const f = fundsInfo({ currency: 'USD', is_prepay: 1, prepaid_funds_minor: 10000, balance_minor: 0, spend_cap_minor: 50000, amount_spent_minor: 45000 }, 20);
+    expect(f).toMatchObject({ kind: 'prepaid', available: 100, capLeft: 50, remaining: 50, limitedBy: 'spend_cap', daysLeft: 2.5 });
+    const post = fundsInfo({ currency: 'USD', is_prepay: 0, prepaid_funds_minor: null, balance_minor: 3456, spend_cap_minor: null, amount_spent_minor: 1 }, 20);
+    expect(post).toMatchObject({ kind: 'postpaid', owed: 34.56, remaining: null, daysLeft: null });
+  });
+
   it('only accepts preview iframes from facebook.com', () => {
     expect(extractPreviewSrc('<iframe src="https://www.facebook.com/ads/api/preview_iframe.php?d=AQ&amp;t=AQ" width="540"></iframe>')).toBe(
       'https://www.facebook.com/ads/api/preview_iframe.php?d=AQ&t=AQ',
@@ -119,6 +131,7 @@ describe('managed accounts and the live dashboard', () => {
       const u = new URL(String(url));
       const path = u.pathname.replace('/v24.0/', '');
       graphCalls.push(path);
+      if (path === 'act_111') return json({ id: 'act_111', balance: '0', amount_spent: '5000000', spend_cap: '0', is_prepay_account: true, funding_source_details: { id: 'fs1', type: 20, display_string: 'Available balance (BDT 2,450.75)' } });
       if (path === 'act_111/campaigns') {
         expect(JSON.parse(u.searchParams.get('effective_status')!)).toContain('ACTIVE');
         return json({ data: [
@@ -223,6 +236,19 @@ describe('managed accounts and the live dashboard', () => {
     expect(detail.totals.contacts.leads.count).toBe(5);
     expect(detail.campaigns[1]).toMatchObject({ campaignId: 'c2', budget: null, metrics: { spend: 0, ctr: null } });
     expect(detail.ads[0]).toMatchObject({ adId: '6001', thumbnailUrl: 'https://scontent.xx.fbcdn.net/t.jpg', campaignName: 'Messages BD', adsetName: 'Broad', metrics: { spend: 500.5 } });
+  });
+
+  it('shows the money left in each account and warns when it runs low', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const b = (await agent.get('/api/live/balances')).body.items[0];
+    // Yesterday's 400 over the last 7 full days is about 57.14 a day; 2,450.75 lasts about 42.9 days.
+    expect(b).toMatchObject({ name: 'Shop A', kind: 'prepaid', available: 2450.75, paymentMethod: 'Available balance (BDT 2,450.75)', avgDailySpend: 57.14, daysLeft: 42.9, spentToday: 600, low: false, error: null });
+    await agent.put('/api/alerts/cost-settings').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ scope: 'account', accountId: accA, limits: { min_days_left: 50 } });
+    expect((await agent.get('/api/live/balances')).body.items[0]).toMatchObject({ low: true, alertDays: 50 });
+    const breaches = await evaluateCostAlerts(accA);
+    expect(breaches.find((x) => x.key === 'funds:account')?.body).toContain('about 42.9 days');
+    await agent.put('/api/alerts/cost-settings').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ scope: 'account', accountId: accA, limits: {} });
+    await execute(`DELETE FROM notifications`);
   });
 
   it('raises cost alerts from the limits in Settings, once per day', async () => {

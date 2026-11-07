@@ -9,6 +9,8 @@ const dict = {
   advancedAds: { en: 'Advanced Ads', bn: 'অ্যাডভান্সড বিজ্ঞাপন' },
   publishing: { en: 'Publishing Center', bn: 'পাবলিশিং সেন্টার' },
   campaigns: { en: 'Campaigns', bn: 'ক্যাম্পেইন' },
+  budgets: { en: 'Budgets', bn: 'বাজেট' },
+  balance: { en: 'Balance', bn: 'ব্যালেন্স' },
   adAccounts: { en: 'Ad Accounts', bn: 'অ্যাড অ্যাকাউন্ট' },
   accountGroups: { en: 'Account Groups', bn: 'অ্যাকাউন্ট গ্রুপ' },
   audiences: { en: 'Audience Manager', bn: 'অডিয়েন্স' },

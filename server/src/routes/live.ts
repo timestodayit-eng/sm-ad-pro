@@ -8,7 +8,8 @@ import { requirePermission } from '../auth/sessions.js';
 import { enqueue } from '../jobs/queue.js';
 import { accountToday, addDays, adPreviewUrl, minorToMajor, RESULT_LABELS } from '../meta/live.js';
 import { audit } from '../services/audit.js';
-import { costAlertsToday, METRICS } from '../services/costAlerts.js';
+import { avgDailySpend, costAlertsToday, effectiveLimits, METRICS } from '../services/costAlerts.js';
+import { fundsInfo } from '../services/funds.js';
 import { accountScope } from './meta.js';
 
 export const liveRouter = Router();
@@ -111,7 +112,7 @@ const round = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 /** The panel-wide account order chosen by the team; accounts not placed yet follow by name. */
 export const ACCOUNT_ORDER = 'a.display_order IS NULL, a.display_order, a.name';
 
-async function managedAccounts(user: Express.Request['user'] & {}, onlyId?: number, groupId?: number) {
+export async function managedAccounts(user: Express.Request['user'] & {}, onlyId?: number, groupId?: number) {
   const scope = accountScope(user);
   const params: unknown[] = [...scope.params];
   if (onlyId) params.push(onlyId);
@@ -439,6 +440,44 @@ liveRouter.put(
     );
     await audit({ orgId, actorUserId: req.user!.id, action: 'cost_alerts.updated', targetType: input.scope === 'account' ? 'ad_account' : 'org', targetId: accountRow ?? undefined, details: { scope: scopeKey, limits: input.limits }, ip: req.ip });
     res.json({ ok: true });
+  }),
+);
+
+// ---------- money left in each account ----------
+
+liveRouter.get(
+  '/live/balances',
+  requirePermission('accounts.read'),
+  asyncHandler(async (req, res) => {
+    const group = await groupFilter(req);
+    const accounts = await managedAccounts(req.user!, undefined, group?.id);
+    if (!accounts.length) return res.json({ group, items: [] });
+    const ids = accounts.map((a) => Number(a.id));
+    const money = await query<any>(
+      `SELECT id, is_prepay, prepaid_funds_minor, balance_minor, spend_cap_minor, amount_spent_minor, funding_display, funds_checked_at, funds_error, disable_reason
+         FROM meta_ad_accounts WHERE id IN (?)`,
+      [ids],
+    );
+    const settings = await query<any>(`SELECT * FROM cost_alert_settings WHERE org_id=?`, [req.user!.orgId]);
+    const items = [];
+    for (const a of accounts) {
+      const id = Number(a.id);
+      const m = money.find((x) => Number(x.id) === id)!;
+      const today = accountToday(a.timezone_name);
+      const avg = (await avgDailySpend([id], today)).get(id) ?? null;
+      const todayRow = await queryOne<any>(`SELECT SUM(spend) AS s FROM meta_insights_daily WHERE level='campaign' AND ad_account_row_id=? AND date=?`, [id, today]);
+      const limits = effectiveLimits(settings.find((r) => r.scope_key === `default:${a.currency}`), settings.find((r) => r.scope_key === `account:${id}`));
+      const f = fundsInfo({ currency: a.currency, ...m }, avg);
+      items.push({
+        id, accountId: a.account_id, name: a.name, currency: a.currency, accountStatus: a.account_status, disableReason: m.disable_reason,
+        paymentMethod: m.funding_display, checkedAt: m.funds_checked_at, error: m.funds_error,
+        spentToday: todayRow?.s != null ? round(Number(todayRow.s)) : 0,
+        alertDays: limits.min_days_left,
+        low: limits.min_days_left != null && f.daysLeft != null && f.daysLeft < limits.min_days_left,
+        ...f,
+      });
+    }
+    res.json({ group, items });
   }),
 );
 

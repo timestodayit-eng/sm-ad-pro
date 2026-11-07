@@ -10,6 +10,7 @@ import {
   FolderKanban,
   Gauge,
   LayoutDashboard,
+  Landmark,
   Layers,
   type LucideIcon,
   Megaphone,
@@ -53,6 +54,8 @@ export const NAV: NavGroup[] = [
     label: 'grpManage',
     items: [
       { to: '/campaigns', label: 'campaigns', icon: Megaphone, summary: 'All campaigns, ad sets and ads across your accounts with status, rejection reasons, approved budget and schedule changes, and a link to open each in Ads Manager.' },
+      { to: '/budgets', label: 'budgets', icon: Wallet },
+      { to: '/balance', label: 'balance', icon: Landmark },
       { to: '/accounts', label: 'adAccounts', icon: Building2 },
       { to: '/account-groups', label: 'accountGroups', icon: FolderKanban },
       { to: '/audiences', label: 'audiences', icon: Target, phase: 5, summary: 'Broad, Advantage+, saved, custom and lookalike audiences, filtered automatically by the Employment category restrictions.' },

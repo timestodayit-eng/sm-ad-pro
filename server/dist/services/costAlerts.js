@@ -1,13 +1,15 @@
 import { execute, query, queryOne } from '../db/pool.js';
-import { accountToday } from '../meta/live.js';
+import { accountToday, addDays } from '../meta/live.js';
+import { fundsInfo } from './funds.js';
 /**
  * Cost alerts, checked after every live sync of an account, on today's numbers in the account's time zone.
  * - Daily spend: the whole account.
  * - Cost per lead / call / message / result: each campaign that spent today, judged on the kind of result it
  *   is getting, so a messaging campaign never raises a "cost per lead" alert.
+ * - Low balance: fewer days of funds (or spending limit) left than the limit, at the last 7 days' average spend.
  * One notification per account or campaign, metric and day.
  */
-export const METRICS = ['daily_spend_limit', 'max_cost_per_lead', 'max_cost_per_call', 'max_cost_per_message', 'max_cost_per_result'];
+export const METRICS = ['daily_spend_limit', 'max_cost_per_lead', 'max_cost_per_call', 'max_cost_per_message', 'max_cost_per_result', 'min_days_left'];
 const LEAD_TYPES = new Set(['lead', 'onsite_conversion.lead_grouped', 'offsite_conversion.fb_pixel_lead']);
 const CALL_TYPES = new Set(['click_to_call_native_call_placed', 'click_to_call_call_confirm']);
 const MESSAGE_TYPES = new Set(['onsite_conversion.messaging_conversation_started_7d']);
@@ -32,6 +34,14 @@ export function findBreaches(input) {
             key: 'spend:account',
             title: `Daily spend over limit: ${input.accountName}`,
             body: `${input.accountName} has spent ${fmt(input.account.spend)} today. Your daily limit is ${fmt(L.daily_spend_limit)}.`,
+        });
+    }
+    const f = input.funds;
+    if (L.min_days_left != null && f?.daysLeft != null && f.daysLeft < L.min_days_left) {
+        out.push({
+            key: 'funds:account',
+            title: `Low balance: ${input.accountName}`,
+            body: `${input.accountName} has ${fmt(f.remaining)} ${f.limitedBy === 'spend_cap' ? 'left before its spending limit' : 'of funds left'}, about ${f.daysLeft} day${f.daysLeft === 1 ? '' : 's'} at ${fmt(f.avgDailySpend)} a day. Your alert is set at ${L.min_days_left} days.`,
         });
     }
     const minSpend = L.min_spend ?? 0;
@@ -66,7 +76,7 @@ export function findBreaches(input) {
     return out;
 }
 export async function evaluateCostAlerts(rowId, now = new Date()) {
-    const acc = await queryOne(`SELECT id, org_id, name, currency, timezone_name FROM meta_ad_accounts WHERE id=?`, [rowId]);
+    const acc = await queryOne(`SELECT id, org_id, name, currency, timezone_name, is_prepay, prepaid_funds_minor, balance_minor, spend_cap_minor, amount_spent_minor FROM meta_ad_accounts WHERE id=?`, [rowId]);
     if (!acc)
         return [];
     const def = await queryOne(`SELECT * FROM cost_alert_settings WHERE org_id=? AND scope_key=?`, [acc.org_id, `default:${acc.currency}`]);
@@ -78,10 +88,12 @@ export async function evaluateCostAlerts(rowId, now = new Date()) {
     const rows = await query(`SELECT i.object_id, c.name, i.spend, i.leads, i.calls, i.messages, i.results, i.result_type
        FROM meta_insights_daily i LEFT JOIN meta_campaigns c ON c.ad_account_row_id=i.ad_account_row_id AND c.campaign_id=i.object_id
       WHERE i.ad_account_row_id=? AND i.level='campaign' AND i.date=?`, [rowId, today]);
+    const avg = await avgDailySpend([rowId], today);
     const breaches = findBreaches({
         accountName: acc.name,
         currency: acc.currency,
         limits,
+        funds: fundsInfo(acc, avg.get(rowId) ?? null),
         account: { spend: rows.reduce((s, r) => s + Number(r.spend), 0) },
         campaigns: rows.map((r) => ({
             id: r.object_id, name: r.name ?? `Campaign ${r.object_id}`, spend: Number(r.spend), leads: Number(r.leads), calls: Number(r.calls),
@@ -102,6 +114,17 @@ export async function costAlertsToday(accounts, now = new Date()) {
         if (Number(r?.n))
             out.set(a.id, Number(r.n));
     }
+    return out;
+}
+/** Average daily spend over the last 7 full days (yesterday and the six days before), per account. */
+export async function avgDailySpend(ids, today) {
+    const out = new Map();
+    if (!ids.length)
+        return out;
+    const rows = await query(`SELECT ad_account_row_id AS id, SUM(spend) AS s FROM meta_insights_daily
+      WHERE level='campaign' AND ad_account_row_id IN (?) AND date BETWEEN ? AND ? GROUP BY ad_account_row_id`, [ids, addDays(today, -7), addDays(today, -1)]);
+    for (const r of rows)
+        out.set(Number(r.id), Math.round((Number(r.s) / 7) * 100) / 100);
     return out;
 }
 //# sourceMappingURL=costAlerts.js.map

@@ -6,6 +6,8 @@ import { Button, EmptyState, ErrorAlert } from './components/ui';
 import { ALL_ITEMS } from './lib/nav';
 import { useSession } from './lib/session';
 import { AccountsPage } from './pages/Accounts';
+import { BalancePage } from './pages/Balance';
+import { BudgetsPage } from './pages/Budgets';
 import { CampaignsPage } from './pages/Campaigns';
 import { AccountGroupsPage } from './pages/Groups';
 import { LoginPage, SetupPage } from './pages/Auth';
@@ -54,6 +56,8 @@ const BUILT: Record<string, ReactNode> = {
   '/accounts': <AccountsPage />,
   '/account-groups': <AccountGroupsPage />,
   '/campaigns': <CampaignsPage />,
+  '/budgets': <BudgetsPage />,
+  '/balance': <BalancePage />,
   '/notifications': <NotificationsPage />,
   '/health': <HealthPage />,
   '/media': <MediaPage />,

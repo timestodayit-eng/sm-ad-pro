@@ -37,6 +37,10 @@ Restore the database backup and redeploy the previous release. Migrations are fo
 
 ## Release notes
 
+- **0.5.1** adds migration `0008_account_funds` (balance, amount owed, payment method and a low-balance alert setting). With phpMyAdmin, import `upgrade-from-schema-7-to-8.sql` (use the 6-, 5- … to-8 file if you skipped releases). The **Balance** page fills in on the next sync of each account, within 15 minutes. Set the low-balance alert under **Settings → Cost alerts → Low balance (days)**.
+
+- **0.5.0** adds migration `0007_budget_changes` (a history of every budget change). With phpMyAdmin, import `upgrade-from-schema-6-to-7.sql` (or `upgrade-from-schema-5-to-7.sql` if you skipped 0.4.2). The new **Budgets** page changes ad set daily budgets on Meta, so the Meta login needs the `ads_management` permission. Only Super Admin, Admin and Media Buyer can confirm a change.
+
 - **0.4.2** adds migration `0006_dashboard_prefs`: one shared account order for the whole panel, each user's column and sort choices, and 90 days of history instead of 30. If you upgrade with phpMyAdmin, import `upgrade-from-schema-5-to-6.sql`. After applying it, set your order under **Settings → Working accounts → Arrange order** (drag, or paste your list). The next sync of each account re-reads 90 days, so older dates fill in within a few minutes.
 
 - **0.4.1** adds migration `0005_lead_call_counts`. Leads, calls and messaging conversations are now counted for every account and campaign, and **Settings → Cost alerts** sets limits for daily spend and cost per lead, call, message or result (a default per currency, overridable per account). After applying it, the next sync re-reads the last 30 days so the new counts fill in.

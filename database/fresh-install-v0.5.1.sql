@@ -1,5 +1,5 @@
 -- =====================================================================================
--- Ads Command Center 0.4.2 : FRESH INSTALL database (schema version 6)
+-- Ads Command Center 0.5.1 : FRESH INSTALL database (schema version 8)
 --
 -- You normally do NOT need this file: the app's Setup page installs the database itself.
 -- Use it only if you prefer to import with phpMyAdmin (MySQL 8).
@@ -9,7 +9,7 @@
 --     "table already exists" instead of overwriting anything. Never run it over a live database.
 --   * To upgrade an existing install, do NOT use this file. Deploy the new release and press
 --     "Apply pending migrations" in Settings -> Database (see docs/UPGRADE.md).
---   * It records migrations 1-6 in schema_migrations, so the app sees the database as up to
+--   * It records migrations 1-8 in schema_migrations, so the app sees the database as up to
 --     date. After importing, open the panel: it asks for the SETUP_TOKEN and creates the Super Admin.
 -- =====================================================================================
 
@@ -527,6 +527,46 @@ CREATE TABLE user_preferences (
 -- The live sync now keeps 90 days instead of 30; the next sync of each account fetches the older days.
 UPDATE meta_ad_accounts SET live_full_synced_at = NULL;
 
+-- ---------------------------------------------------------------- 0007_budget_changes
+-- 0007_budget_changes: every ad set budget change the panel makes on Meta, with what Meta reported back.
+
+CREATE TABLE budget_changes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id BIGINT UNSIGNED NOT NULL,
+  batch_id CHAR(36) NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  ad_account_row_id BIGINT UNSIGNED NOT NULL,
+  adset_id VARCHAR(32) NOT NULL,
+  adset_name VARCHAR(512) NULL,
+  position INT NOT NULL,
+  currency CHAR(3) NOT NULL,
+  old_daily_budget_minor BIGINT NULL,
+  new_daily_budget_minor BIGINT NOT NULL,
+  confirmed_daily_budget_minor BIGINT NULL,
+  status VARCHAR(16) NOT NULL,
+  error_code VARCHAR(64) NULL,
+  error_message VARCHAR(1000) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_budget_changes_org (org_id, created_at),
+  KEY idx_budget_changes_batch (batch_id),
+  CONSTRAINT fk_budget_changes_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- 0008_account_funds
+-- 0008_account_funds: money left in each ad account (prepaid funds, amount owed, spending limit), read on every
+-- live sync, and a low-balance alert measured in days of spend left.
+
+ALTER TABLE meta_ad_accounts
+  ADD COLUMN balance_minor BIGINT NULL AFTER spend_cap_minor,
+  ADD COLUMN is_prepay TINYINT(1) NULL AFTER balance_minor,
+  ADD COLUMN funding_type INT NULL AFTER is_prepay,
+  ADD COLUMN funding_display VARCHAR(255) NULL AFTER funding_type,
+  ADD COLUMN prepaid_funds_minor BIGINT NULL AFTER funding_display,
+  ADD COLUMN funds_checked_at DATETIME(3) NULL AFTER prepaid_funds_minor,
+  ADD COLUMN funds_error VARCHAR(500) NULL AFTER funds_checked_at;
+
+ALTER TABLE cost_alert_settings ADD COLUMN min_days_left DECIMAL(8,2) NULL AFTER max_cost_per_result;
+
 -- ---------------------------------------------------------------- record what was applied
 INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
   (1, '0001_foundation', 'bed3cda6f6eec68af544ca187e09074281aa5ff13d2a76228b7ec99449af8560', 'applied', 'fresh-install-sql'),
@@ -534,4 +574,6 @@ INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALU
   (3, '0003_two_factor', '47a2f25e0c80314f2e6d2b89362093445a7a2216aff1499fcbebb4194a749d4e', 'applied', 'fresh-install-sql'),
   (4, '0004_live_reporting', '2c7d6b32998a1bb821fae0e851472a114450c595f019eec4a5405971f6d50dc6', 'applied', 'fresh-install-sql'),
   (5, '0005_lead_call_counts', 'ec6935a177b44b1b895cade7e894adfc0ec2456997932c65ae8d86817cb26af2', 'applied', 'fresh-install-sql'),
-  (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'fresh-install-sql');
+  (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'fresh-install-sql'),
+  (7, '0007_budget_changes', '7ef76bbd233f7c232a4217e345c2cc19e131a5dd4e77ff0adc03d68d956dd900', 'applied', 'fresh-install-sql'),
+  (8, '0008_account_funds', '73c0bb4d0f513ff177660d25fd9ee6322807fa97c8b6380158d24cc506ec9f26', 'applied', 'fresh-install-sql');
