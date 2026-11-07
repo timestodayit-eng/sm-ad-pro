@@ -103,6 +103,8 @@ async function bulkUpsert(sqlHead, sqlTail, rows) {
         await execute(`${sqlHead} VALUES ? ${sqlTail}`, [rows.slice(i, i + 500)]);
 }
 const FULL_SYNC_EVERY_MS = 20 * 3600 * 1000;
+/** Days of daily insights kept fresh: enough for "Last month" and custom ranges up to three months back. */
+export const LIVE_HISTORY_DAYS = 90;
 /** Syncs one managed ad account. Throws MetaApiError on Meta failures after recording the error on the account. */
 export async function syncAccountLive(rowId, opts = {}) {
     const acc = await queryOne(`SELECT a.*, c.token_ciphertext, c.status AS connection_status
@@ -146,7 +148,7 @@ export async function syncAccountLive(rowId, opts = {}) {
             await execute(`DELETE FROM ${t} WHERE ad_account_row_id=? AND synced_at < ?`, [rowId, started]);
         const until = accountToday(acc.timezone_name, opts.now);
         const full = opts.full || !acc.live_full_synced_at || started.getTime() - new Date(acc.live_full_synced_at).getTime() > FULL_SYNC_EVERY_MS;
-        const since = addDays(until, full ? -29 : -2);
+        const since = addDays(until, full ? -(LIVE_HISTORY_DAYS - 1) : -2);
         let insightRows = 0;
         for (const level of ['campaign', 'ad']) {
             const rows = await graphPaged({

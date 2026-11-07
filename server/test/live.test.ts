@@ -72,7 +72,11 @@ describe('live data helpers', () => {
     const now = new Date('2026-11-07T20:30:00Z'); // 02:30 on the 8th in Dhaka
     expect(accountToday('Asia/Dhaka', now)).toBe('2026-11-08');
     expect(accountToday('America/Los_Angeles', now)).toBe('2026-11-07');
-    expect(periodRange('7d', 'Asia/Dhaka', now)).toEqual({ since: '2026-11-02', until: '2026-11-08' });
+    expect(periodRange('7d', 'Asia/Dhaka', now)).toEqual({ since: '2026-11-01', until: '2026-11-07' }); // ends yesterday, like Ads Manager
+    expect(periodRange('this_month', 'Asia/Dhaka', now)).toEqual({ since: '2026-11-01', until: '2026-11-08' });
+    expect(periodRange('last_month', 'Asia/Dhaka', now)).toEqual({ since: '2026-10-01', until: '2026-10-31' });
+    expect(periodRange('last_month', 'Asia/Dhaka', new Date('2026-03-10T00:00:00Z'))).toEqual({ since: '2026-02-01', until: '2026-02-28' });
+    expect(periodRange({ period: 'custom', since: '2026-10-15', until: '2026-12-01' }, 'Asia/Dhaka', now)).toEqual({ since: '2026-10-15', until: '2026-11-08' });
     expect(periodRange('yesterday', 'Asia/Dhaka', now)).toEqual({ since: '2026-11-07', until: '2026-11-07' });
   });
 
@@ -183,7 +187,7 @@ describe('managed accounts and the live dashboard', () => {
 
   it('syncs campaigns, ads and daily results from Meta and adds them up per period', async () => {
     const out = await syncAccountLive(accA);
-    expect(out).toMatchObject({ campaigns: 2, adsets: 2, ads: 2, insightRows: 4, until: today, since: addDays(today, -29) });
+    expect(out).toMatchObject({ campaigns: 2, adsets: 2, ads: 2, insightRows: 4, until: today, since: addDays(today, -89) });
     const { agent } = await signIn(app, 'boss@example.test', pw);
 
     const todayView = (await agent.get('/api/live/overview?period=today')).body;
@@ -203,8 +207,15 @@ describe('managed accounts and the live dashboard', () => {
     expect(todayView.totalsByCurrency[0]).toMatchObject({ currency: 'BDT', accounts: 1, spend: 600, impressions: 11000 });
 
     const week = (await agent.get('/api/live/overview?period=7d')).body.accounts[0];
-    expect(week.metrics.spend).toBe(1000);
-    expect(week.metrics.ctr).toBeCloseTo((310 / 19000) * 100, 3);
+    expect(week.metrics.spend).toBe(400); // yesterday only: "Last 7 days" excludes today
+    expect(week.metrics.ctr).toBeCloseTo((100 / 8000) * 100, 3);
+    const both = (await agent.get(`/api/live/overview?period=custom&since=${yesterday}&until=${today}`)).body.accounts[0];
+    expect(both.metrics.spend).toBe(1000);
+    expect(both.incomplete).toBe(false);
+    const old = (await agent.get(`/api/live/overview?period=custom&since=${addDays(today, -200)}&until=${today}`)).body.accounts[0];
+    expect(old.incomplete).toBe(true);
+    expect((await agent.get(`/api/live/overview?period=custom&since=${today}&until=${yesterday}`)).status).toBe(400);
+    expect((await agent.get('/api/live/overview?period=custom')).status).toBe(400);
 
     const detail = (await agent.get(`/api/live/accounts/${accA}?period=today`)).body;
     expect(detail.unlistedSpend).toBe(99.5);
@@ -262,6 +273,70 @@ describe('managed accounts and the live dashboard', () => {
     const { agent } = await signIn(app, 'boss@example.test', pw);
     const b = (await agent.get('/api/live/overview?period=today')).body.accounts.find((x: any) => x.id === accB);
     expect(b).toMatchObject({ metrics: null, syncError: expect.stringContaining('Meta code 100') });
+  });
+
+  it('saves each user\'s dashboard layout', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    expect((await agent.get('/api/me/preferences/dashboard')).body).toEqual({ columns: [], sort: null });
+    const prefs = { columns: [{ key: 'calls', visible: true }, { key: 'leads', visible: false }], sort: { key: 'custom', dir: 'asc' } };
+    const r = await agent.put('/api/me/preferences/dashboard').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(prefs);
+    expect(r.status).toBe(200);
+    expect((await agent.get('/api/me/preferences/dashboard')).body).toEqual(prefs);
+    const bad = await agent.put('/api/me/preferences/dashboard').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ columns: [{ key: 'password', visible: true }] });
+    expect(bad.status).toBe(400);
+    const viewer = await signIn(app, 'viewer@example.test', pw);
+    expect((await viewer.agent.get('/api/me/preferences/dashboard')).body.columns).toEqual([]);
+  });
+
+  it('keeps one account order for the whole panel, set by a manager', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const send = (body: any, who = { agent, csrf }) => who.agent.put('/api/accounts/order').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', who.csrf).send(body);
+    await execute(`UPDATE meta_ad_accounts SET is_managed=1 WHERE id IN (?)`, [[accA, accB]]);
+    const accC = (await execute(`INSERT INTO meta_ad_accounts (org_id, connection_id, account_id, name, currency, timezone_name, account_status, is_managed) SELECT org_id, connection_id, '333', 'Shop C', 'BDT', 'Asia/Dhaka', 1, 1 FROM meta_ad_accounts WHERE id=?`, [accA])).insertId;
+    const names = async () => (await agent.get('/api/accounts/order')).body.items.map((a: any) => a.name);
+    expect(await names()).toEqual(['Shop A', 'Shop B', 'Shop C']);
+    expect((await send({ accountIds: [accC, accA, accB] })).body.accountIds).toEqual([accC, accA, accB]);
+    expect(await names()).toEqual(['Shop C', 'Shop A', 'Shop B']);
+    expect((await agent.get('/api/live/overview?period=today')).body.accounts.map((a: any) => a.name)).toEqual(['Shop C', 'Shop A', 'Shop B']);
+    // A subset (one group) is rearranged among its own places; Shop C stays first.
+    await send({ accountIds: [accB, accA] });
+    expect(await names()).toEqual(['Shop C', 'Shop B', 'Shop A']);
+    const search = await agent.post('/api/accounts/search').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ managed: 'managed' });
+    expect(search.body.items.map((a: any) => a.name)).toEqual(['Shop C', 'Shop B', 'Shop A']);
+    expect((await send({ accountIds: [accA, accA] })).status).toBe(400);
+    const viewer = await signIn(app, 'viewer@example.test', pw);
+    expect((await send({ accountIds: [accA] }, viewer)).status).toBe(403);
+    await execute(`UPDATE meta_ad_accounts SET is_managed=0 WHERE id IN (?)`, [[accB, accC]]);
+    expect((await send({ accountIds: [accB] })).status).toBe(400);
+  });
+
+  it('opens a group on the dashboard and the campaigns list, and lets a manager edit it', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const send = (m: 'post' | 'put' | 'delete', url: string, body?: any) => agent[m](url).set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(body);
+    await execute(`UPDATE meta_ad_accounts SET is_managed=0 WHERE id=?`, [accB]);
+    const g = (await send('post', '/api/account-groups', { name: 'Brand B', accountIds: [accB] })).body.id;
+    const list = (await agent.get('/api/account-groups')).body.items.find((x: any) => x.id === g);
+    expect(list).toMatchObject({ members: 1, managed: 0 }); // Shop B is not on the dashboard
+    const empty = (await agent.get(`/api/live/overview?period=today&group=${g}`)).body;
+    expect(empty).toMatchObject({ group: { id: g, name: 'Brand B', members: 1 }, managedCount: 1, accounts: [] });
+
+    const viewer = await signIn(app, 'viewer@example.test', pw);
+    expect((await viewer.agent.put(`/api/account-groups/${g}`).set('Origin', TEST_ORIGIN).set('X-CSRF-Token', viewer.csrf).send({ name: 'X', accountIds: [] })).status).toBe(403);
+    expect((await send('put', `/api/account-groups/${g}`, { name: 'Brand A', accountIds: [accA, accB, 999999] })).status).toBe(200);
+    const detail = (await agent.get(`/api/account-groups/${g}`)).body;
+    expect(detail).toMatchObject({ name: 'Brand A', members: [{ id: accA, name: 'Shop A', managed: true }, { id: accB, name: 'Shop B', managed: false }] });
+    const view = (await agent.get(`/api/live/overview?period=today&group=${g}`)).body;
+    expect(view.accounts.map((a: any) => a.name)).toEqual(['Shop A']);
+
+    const camps = (await agent.get(`/api/live/campaigns?period=today&group=${g}`)).body;
+    expect(camps.items.map((c: any) => c.campaignId).sort()).toEqual(['c1', 'c2']);
+    expect(camps.items.find((c: any) => c.campaignId === 'c1')).toMatchObject({ accountName: 'Shop A', currency: 'BDT', budget: { kind: 'daily', amount: 1000 }, ads: { active: 1, rejected: 1 }, metrics: { spend: 500.5, contacts: { calls: { count: 2 } } } });
+    const week = (await agent.get('/api/live/campaigns?period=7d')).body.items.find((c: any) => c.campaignId === 'c1');
+    expect(week.metrics.spend).toBe(400);
+
+    expect((await agent.get('/api/live/overview?group=999999')).status).toBe(404);
+    expect((await send('delete', `/api/account-groups/${g}`)).status).toBe(200);
+    expect((await agent.get(`/api/account-groups/${g}`)).status).toBe(404);
   });
 
   it('allows Meta preview iframes in the content security policy', async () => {

@@ -60,7 +60,7 @@ const searchSchema = z.object({
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     page: z.number().int().min(1).default(1),
     pageSize: z.number().int().min(1).max(500).default(50),
-    sort: z.enum(['name', 'last_synced_at', 'currency']).default('name'),
+    sort: z.enum(['order', 'name', 'last_synced_at', 'currency']).default('order'),
 });
 metaRouter.post('/accounts/search', requirePermission('accounts.read'), asyncHandler(async (req, res) => {
     const f = parse(searchSchema, req.body ?? {});
@@ -94,7 +94,7 @@ metaRouter.post('/accounts/search', requirePermission('accounts.read'), asyncHan
     }
     const whereSql = where.join(' AND ');
     const total = await queryOne(`SELECT COUNT(*) AS n FROM meta_ad_accounts a WHERE ${whereSql}`, params);
-    const order = f.sort === 'last_synced_at' ? 'a.last_synced_at DESC' : f.sort === 'currency' ? 'a.currency, a.name' : 'a.name';
+    const order = f.sort === 'last_synced_at' ? 'a.last_synced_at DESC' : f.sort === 'currency' ? 'a.currency, a.name' : f.sort === 'name' ? 'a.name' : 'a.is_managed DESC, a.display_order IS NULL, a.display_order, a.name';
     const rows = await query(`SELECT a.id, a.account_id, a.name, a.currency, a.timezone_name, a.account_status, a.disable_reason, a.amount_spent_minor, a.spend_cap_minor,
               a.business_name, a.last_synced_at, a.last_sync_error, a.is_managed, a.live_synced_at, a.live_sync_error, b.name AS brand_name,
               c.status AS connection_status, c.meta_user_name, d.page_id, d.phone_number, d.website_url
@@ -165,10 +165,10 @@ metaRouter.put('/accounts/:id/defaults', requirePermission('accounts.manage', 'c
     res.json({ ok: true });
 }));
 metaRouter.get('/account-groups', requirePermission('accounts.read'), asyncHandler(async (req, res) => {
-    const rows = await query(`SELECT g.id, g.name, g.description, g.brand_id, COUNT(m.ad_account_row_id) AS members
-         FROM account_groups g LEFT JOIN account_group_members m ON m.group_id=g.id
+    const rows = await query(`SELECT g.id, g.name, g.description, g.brand_id, COUNT(a.id) AS members, COALESCE(SUM(a.is_managed=1 AND a.is_enabled=1), 0) AS managed
+         FROM account_groups g LEFT JOIN account_group_members m ON m.group_id=g.id LEFT JOIN meta_ad_accounts a ON a.id=m.ad_account_row_id
         WHERE g.org_id=? GROUP BY g.id ORDER BY g.name`, [req.user.orgId]);
-    res.json({ items: rows.map((r) => ({ ...r, members: Number(r.members) })) });
+    res.json({ items: rows.map((r) => ({ ...r, members: Number(r.members), managed: Number(r.managed) })) });
 }));
 metaRouter.post('/account-groups', requirePermission('accounts.manage', 'create account groups'), asyncHandler(async (req, res) => {
     const input = parse(z.object({ name: z.string().trim().min(2).max(190), description: z.string().max(512).optional(), accountIds: z.array(z.number().int().positive()).max(10000).default([]) }), req.body);
@@ -186,5 +186,42 @@ metaRouter.post('/account-groups', requirePermission('accounts.manage', 'create 
         return g.insertId;
     });
     res.status(201).json({ id });
+}));
+async function ownGroup(orgId, id, conn) {
+    const g = await queryOne(`SELECT id, name, description FROM account_groups WHERE id=? AND org_id=?`, [id, orgId], conn);
+    if (!g)
+        throw errors.notFound('Account group');
+    return g;
+}
+metaRouter.get('/account-groups/:id', requirePermission('accounts.read'), asyncHandler(async (req, res) => {
+    const id = parse(idParam, req.params.id);
+    const g = await ownGroup(req.user.orgId, id);
+    const members = await query(`SELECT a.id, a.account_id, a.name, a.currency, a.is_managed, a.is_enabled FROM account_group_members m
+         JOIN meta_ad_accounts a ON a.id=m.ad_account_row_id WHERE m.group_id=? ORDER BY a.name`, [id]);
+    res.json({ id: Number(g.id), name: g.name, description: g.description, members: members.map((m) => ({ id: Number(m.id), accountId: m.account_id, name: m.name, currency: m.currency, managed: !!m.is_managed && !!m.is_enabled })) });
+}));
+metaRouter.put('/account-groups/:id', requirePermission('accounts.manage', 'edit account groups'), asyncHandler(async (req, res) => {
+    const id = parse(idParam, req.params.id);
+    const input = parse(z.object({ name: z.string().trim().min(2).max(190), description: z.string().max(512).nullable().optional(), accountIds: z.array(z.number().int().positive()).max(10000) }), req.body);
+    await transaction(async (conn) => {
+        await ownGroup(req.user.orgId, id, conn);
+        const dup = await queryOne(`SELECT id FROM account_groups WHERE org_id=? AND name=? AND id<>?`, [req.user.orgId, input.name, id], conn);
+        if (dup)
+            throw new AppError({ code: 'GROUP_EXISTS', message: 'A group with this name already exists.', status: 409, category: 'conflict' });
+        await execute(`UPDATE account_groups SET name=?, description=? WHERE id=?`, [input.name, input.description ?? null, id], conn);
+        await execute(`DELETE FROM account_group_members WHERE group_id=?`, [id], conn);
+        const valid = input.accountIds.length ? await query(`SELECT id FROM meta_ad_accounts WHERE org_id=? AND id IN (?)`, [req.user.orgId, input.accountIds], conn) : [];
+        for (const v of valid)
+            await execute(`INSERT INTO account_group_members (group_id, ad_account_row_id) VALUES (?,?)`, [id, v.id], conn);
+        await audit({ orgId: req.user.orgId, actorUserId: req.user.id, action: 'account_group.updated', targetType: 'account_group', targetId: id, details: { name: input.name, members: valid.length }, ip: req.ip }, conn);
+    });
+    res.json({ ok: true });
+}));
+metaRouter.delete('/account-groups/:id', requirePermission('accounts.manage', 'delete account groups'), asyncHandler(async (req, res) => {
+    const id = parse(idParam, req.params.id);
+    const g = await ownGroup(req.user.orgId, id);
+    await execute(`DELETE FROM account_groups WHERE id=?`, [id]);
+    await audit({ orgId: req.user.orgId, actorUserId: req.user.id, action: 'account_group.deleted', targetType: 'account_group', targetId: id, details: { name: g.name }, ip: req.ip });
+    res.json({ ok: true });
 }));
 //# sourceMappingURL=meta.js.map

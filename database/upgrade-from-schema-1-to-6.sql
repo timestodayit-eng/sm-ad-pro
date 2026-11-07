@@ -1,0 +1,215 @@
+-- =====================================================================================
+-- Ads Command Center 0.4.2 : UPGRADE database from schema version 1 to 6
+--
+-- Use this ONLY on a database that is at schema version 1. To check: open the table
+-- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 1.
+--   * Back up first: phpMyAdmin -> Export.
+--   * Deploy the 0.4.2 files and restart the app before or right after importing.
+--   * If it stops with "Duplicate column" or "Table already exists", this upgrade (or part of it)
+--     was already applied: restore your backup and use the file for your real version instead.
+--   * You can also skip this file: Settings -> Database -> "Apply pending migrations" does the same.
+-- Applies: 0002_media, 0003_two_factor, 0004_live_reporting, 0005_lead_call_counts, 0006_dashboard_prefs
+-- =====================================================================================
+
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
+-- ---------------------------------------------------------------- 0002_media
+-- 0002_media: media library (direct-to-R2 multipart uploads).
+
+CREATE TABLE media_assets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id BIGINT UNSIGNED NOT NULL,
+  brand_id BIGINT UNSIGNED NULL,
+  kind VARCHAR(8) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  content_type VARCHAR(100) NOT NULL,
+  size_bytes BIGINT UNSIGNED NOT NULL,
+  object_key VARCHAR(512) NOT NULL,
+  -- uploading -> ready | failed | aborted ; ready -> deleted
+  status VARCHAR(16) NOT NULL DEFAULT 'uploading',
+  upload_id VARCHAR(1024) NULL,
+  part_size INT UNSIGNED NOT NULL,
+  part_count INT UNSIGNED NOT NULL,
+  fingerprint VARCHAR(64) NULL,
+  width INT UNSIGNED NULL,
+  height INT UNSIGNED NULL,
+  duration_ms INT UNSIGNED NULL,
+  thumbnail_key VARCHAR(512) NULL,
+  last_error TEXT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  completed_at DATETIME(3) NULL,
+  deleted_at DATETIME(3) NULL,
+  UNIQUE KEY uq_media_object (object_key),
+  KEY idx_media_org_status (org_id, status, id),
+  KEY idx_media_fingerprint (org_id, fingerprint, status),
+  CONSTRAINT fk_media_org FOREIGN KEY (org_id) REFERENCES orgs(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- R2 drops unfinished multipart uploads after 7 days; abort ours at 6 so the library never lists ghosts.
+INSERT INTO recurring_schedules (name, queue, type, interval_seconds) VALUES
+  ('media_stale_uploads', 'maintenance', 'media.abort_stale_uploads', 21600);
+
+-- ---------------------------------------------------------------- 0003_two_factor
+-- 0003_two_factor: TOTP two-step login with recovery codes.
+
+ALTER TABLE users
+  ADD COLUMN totp_secret_enc TEXT NULL,
+  ADD COLUMN totp_pending_enc TEXT NULL,
+  ADD COLUMN totp_enabled_at DATETIME(3) NULL,
+  ADD COLUMN totp_last_step BIGINT UNSIGNED NULL,
+  ADD COLUMN recovery_codes JSON NULL;
+
+-- Password accepted, code not yet entered. Short-lived, single use, limited attempts.
+CREATE TABLE login_challenges (
+  id CHAR(64) NOT NULL PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  expires_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_login_challenges_user (user_id),
+  CONSTRAINT fk_login_challenges_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- 0004_live_reporting
+-- 0004_live_reporting: choose which ad accounts the panel manages, and keep their campaigns, ads and daily results in sync.
+
+ALTER TABLE meta_ad_accounts
+  ADD COLUMN is_managed TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN live_synced_at DATETIME(3) NULL,
+  ADD COLUMN live_full_synced_at DATETIME(3) NULL,
+  ADD COLUMN live_sync_error VARCHAR(1024) NULL,
+  ADD KEY idx_ad_account_managed (org_id, is_managed);
+
+CREATE TABLE meta_campaigns (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  ad_account_row_id BIGINT UNSIGNED NOT NULL,
+  campaign_id VARCHAR(32) NOT NULL,
+  name VARCHAR(512) NOT NULL,
+  status VARCHAR(32) NULL,
+  effective_status VARCHAR(32) NULL,
+  objective VARCHAR(64) NULL,
+  daily_budget_minor BIGINT NULL,
+  lifetime_budget_minor BIGINT NULL,
+  synced_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uq_campaign (ad_account_row_id, campaign_id),
+  CONSTRAINT fk_campaign_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE meta_adsets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  ad_account_row_id BIGINT UNSIGNED NOT NULL,
+  adset_id VARCHAR(32) NOT NULL,
+  campaign_id VARCHAR(32) NOT NULL,
+  name VARCHAR(512) NOT NULL,
+  status VARCHAR(32) NULL,
+  effective_status VARCHAR(32) NULL,
+  daily_budget_minor BIGINT NULL,
+  lifetime_budget_minor BIGINT NULL,
+  optimization_goal VARCHAR(64) NULL,
+  synced_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uq_adset (ad_account_row_id, adset_id),
+  KEY idx_adset_campaign (campaign_id),
+  CONSTRAINT fk_adset_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE meta_ads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  ad_account_row_id BIGINT UNSIGNED NOT NULL,
+  ad_id VARCHAR(32) NOT NULL,
+  adset_id VARCHAR(32) NOT NULL,
+  campaign_id VARCHAR(32) NOT NULL,
+  name VARCHAR(512) NOT NULL,
+  status VARCHAR(32) NULL,
+  effective_status VARCHAR(32) NULL,
+  creative_id VARCHAR(32) NULL,
+  thumbnail_url VARCHAR(2048) NULL,
+  title VARCHAR(512) NULL,
+  body TEXT NULL,
+  synced_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uq_ad (ad_account_row_id, ad_id),
+  KEY idx_ad_campaign (campaign_id),
+  CONSTRAINT fk_ad_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One row per object per day, in the ad account's own time zone, exactly as Meta reports it.
+-- Reach is not stored: it cannot be added across days.
+CREATE TABLE meta_insights_daily (
+  ad_account_row_id BIGINT UNSIGNED NOT NULL,
+  level VARCHAR(8) NOT NULL,
+  object_id VARCHAR(32) NOT NULL,
+  date DATE NOT NULL,
+  objective VARCHAR(64) NULL,
+  spend DECIMAL(18,4) NOT NULL DEFAULT 0,
+  impressions BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  clicks BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  link_clicks BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  result_type VARCHAR(96) NULL,
+  results BIGINT UNSIGNED NULL,
+  actions JSON NULL,
+  synced_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (level, object_id, date),
+  KEY idx_insights_account (ad_account_row_id, level, date),
+  CONSTRAINT fk_insights_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO recurring_schedules (name, queue, type, interval_seconds) VALUES
+  ('meta_live_sync', 'sync', 'meta.sync_live', 900);
+
+-- ---------------------------------------------------------------- 0005_lead_call_counts
+-- 0005_lead_call_counts: leads, calls and messages as their own columns, and cost alert limits.
+
+ALTER TABLE meta_insights_daily
+  ADD COLUMN leads BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN calls BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  ADD COLUMN messages BIGINT UNSIGNED NOT NULL DEFAULT 0;
+
+-- Rows synced before this column existed have zeros; the next sync re-fetches the full 30 days to fill them in.
+UPDATE meta_ad_accounts SET live_full_synced_at = NULL;
+
+-- Cost alerts. One row for the default limits of each currency, and one row per account that overrides them.
+-- Default row: NULL or 0 means "no alert". Account row: NULL means "use the default", 0 means "off for this account".
+CREATE TABLE cost_alert_settings (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  org_id BIGINT UNSIGNED NOT NULL,
+  scope_key VARCHAR(64) NOT NULL,
+  ad_account_row_id BIGINT UNSIGNED NULL,
+  currency CHAR(3) NOT NULL,
+  daily_spend_limit DECIMAL(18,4) NULL,
+  max_cost_per_lead DECIMAL(18,4) NULL,
+  max_cost_per_call DECIMAL(18,4) NULL,
+  max_cost_per_message DECIMAL(18,4) NULL,
+  max_cost_per_result DECIMAL(18,4) NULL,
+  min_spend DECIMAL(18,4) NULL,
+  updated_by BIGINT UNSIGNED NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_cost_alert_scope (org_id, scope_key),
+  CONSTRAINT fk_cost_alert_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------- 0006_dashboard_prefs
+-- 0006_dashboard_prefs: one shared account order for the whole panel, per-user layout choices
+-- (columns, sort), and 90 days of daily history.
+
+ALTER TABLE meta_ad_accounts ADD COLUMN display_order INT NULL AFTER is_managed;
+
+CREATE TABLE user_preferences (
+  user_id BIGINT UNSIGNED NOT NULL,
+  pref_key VARCHAR(64) NOT NULL,
+  value JSON NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (user_id, pref_key),
+  CONSTRAINT fk_user_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The live sync now keeps 90 days instead of 30; the next sync of each account fetches the older days.
+UPDATE meta_ad_accounts SET live_full_synced_at = NULL;
+
+-- ---------------------------------------------------------------- record what was applied
+INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
+  (2, '0002_media', '69eee0842be8295c40630cf665890f975ccfc44d337a7d2062ed6d42cfa47621', 'applied', 'upgrade-sql'),
+  (3, '0003_two_factor', '47a2f25e0c80314f2e6d2b89362093445a7a2216aff1499fcbebb4194a749d4e', 'applied', 'upgrade-sql'),
+  (4, '0004_live_reporting', '2c7d6b32998a1bb821fae0e851472a114450c595f019eec4a5405971f6d50dc6', 'applied', 'upgrade-sql'),
+  (5, '0005_lead_call_counts', 'ec6935a177b44b1b895cade7e894adfc0ec2456997932c65ae8d86817cb26af2', 'applied', 'upgrade-sql'),
+  (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'upgrade-sql');

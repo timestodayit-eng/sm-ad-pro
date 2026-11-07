@@ -38,7 +38,7 @@ export function AccountsPage() {
   const [debounced, setDebounced] = useState('');
   const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [currency, setCurrency] = useState('');
-  const [managed, setManaged] = useState<'all' | 'managed' | 'unmanaged'>(params.get('pick') ? 'unmanaged' : 'all');
+  const [managed, setManaged] = useState<'all' | 'managed' | 'unmanaged'>(params.get('pick') ? 'unmanaged' : 'managed');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [groupName, setGroupName] = useState('');
@@ -171,8 +171,8 @@ export function AccountsPage() {
         <div className="mt-6 flex items-start gap-3 rounded-2xl border border-line bg-surface-2 px-4 py-3 text-sm text-ink-2">
           <LayoutDashboard className="mt-0.5 size-4 shrink-0 text-brand" />
           <span>
-            Turn <strong className="text-ink">Dashboard</strong> on for the accounts you want to manage. Only those accounts are synced live
-            (spend, results, campaigns, ads) and shown on the dashboard. Tick several and use “Add to dashboard” to do many at once.
+            Turn <strong className="text-ink">Working</strong> on for the accounts you work with. Only those are synced live and shown on the dashboard,
+            Campaigns, groups and alerts. Tick several and use “Add to working accounts” to do many at once. Set their order in Settings → Working accounts.
           </span>
         </div>
       )}
@@ -183,7 +183,7 @@ export function AccountsPage() {
             <Search className="pointer-events-none absolute top-3 left-3 size-4 text-ink-3" />
             <Input placeholder="Search by name, ID or business" className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search accounts" />
           </div>
-          <Segmented label="Dashboard" value={managed} onChange={setManaged} options={[{ value: 'all', label: 'All' }, { value: 'managed', label: 'On dashboard' }, { value: 'unmanaged', label: 'Not on dashboard' }]} />
+          <Segmented label="Working accounts" value={managed} onChange={setManaged} options={[{ value: 'all', label: 'All' }, { value: 'managed', label: 'Working accounts' }, { value: 'unmanaged', label: 'Not added' }]} />
           <Segmented label="Status" value={status} onChange={setStatus} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Not active' }]} />
           <Select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-32" aria-label="Currency">
             <option value="">All currencies</option>
@@ -197,10 +197,10 @@ export function AccountsPage() {
           <div className="flex flex-wrap items-center gap-3 border-b border-line bg-surface-2 px-4 py-3 text-sm">
             <span className="font-medium text-ink">{selected.size} selected</span>
             <Button size="sm" icon={<Eye className="size-4" />} loading={setManagedFor.isPending && setManagedFor.variables?.managed} onClick={() => setManagedFor.mutate({ ids: [...selected], managed: true })}>
-              Add to dashboard
+              Add to working accounts
             </Button>
             <Button size="sm" variant="secondary" icon={<EyeOff className="size-4" />} loading={setManagedFor.isPending && !setManagedFor.variables?.managed} onClick={() => setManagedFor.mutate({ ids: [...selected], managed: false })}>
-              Remove from dashboard
+              Remove from working accounts
             </Button>
             <span className="h-5 w-px bg-line" aria-hidden />
             <Input placeholder="New group name" value={groupName} onChange={(e) => setGroupName(e.target.value)} className="h-9 w-56" />
@@ -252,7 +252,7 @@ export function AccountsPage() {
                     </button>
                   </th>
                   <th className="px-2 py-3">Account</th>
-                  <th className="px-2 py-3">Dashboard</th>
+                  <th className="px-2 py-3">Working</th>
                   <th className="px-2 py-3">Status</th>
                   <th className="px-2 py-3">Currency</th>
                   <th className="px-2 py-3">Publishing readiness</th>
@@ -280,7 +280,7 @@ export function AccountsPage() {
                         <button
                           className={cx('inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs font-medium transition-colors', a.is_managed ? 'border-brand/40 bg-brand/10 text-brand' : 'border-line text-ink-3 hover:text-ink')}
                           aria-pressed={!!a.is_managed}
-                          title={a.live_sync_error ?? (a.is_managed ? 'Shown on the dashboard and synced live. Click to remove.' : 'Click to show this account on the dashboard')}
+                          title={a.live_sync_error ?? (a.is_managed ? 'A working account: shown everywhere and synced live. Click to remove.' : 'Click to add this to your working accounts')}
                           disabled={setManagedFor.isPending && setManagedFor.variables?.ids.length === 1 && setManagedFor.variables.ids[0] === a.id}
                           onClick={() => setManagedFor.mutate({ ids: [a.id], managed: !a.is_managed })}
                         >
@@ -334,40 +334,3 @@ export function AccountsPage() {
     </>
   );
 }
-
-export function AccountGroupsPage() {
-  const { t } = useI18n();
-  usePageTitle(t('accountGroups'));
-  const q = useQuery({ queryKey: ['account-groups'], queryFn: () => get('/account-groups') });
-  return (
-    <>
-      <PageHeader title={t('accountGroups')} description="Saved selections of ad accounts, for example one group per brand. Create a group by selecting accounts on the Ad Accounts page." />
-      {q.error && <ErrorAlert error={q.error} />}
-      <Card>
-        {q.isLoading ? (
-          <div className="space-y-2 p-4">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-          </div>
-        ) : !q.data?.items?.length ? (
-          <EmptyState icon={<FolderPlus className="size-6" />} title="No groups yet">
-            Go to Ad Accounts, tick the accounts you want, and choose “Save as group”.
-          </EmptyState>
-        ) : (
-          <ul className="divide-y divide-line">
-            {q.data.items.map((g: any) => (
-              <li key={g.id} className="flex items-center justify-between gap-3 px-5 py-4">
-                <div>
-                  <div className="font-medium text-ink">{g.name}</div>
-                  {g.description && <div className="text-sm text-ink-3">{g.description}</div>}
-                </div>
-                <Badge tone="brand">{g.members} accounts</Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </>
-  );
-}
-

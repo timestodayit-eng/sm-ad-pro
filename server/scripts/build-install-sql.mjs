@@ -54,3 +54,32 @@ mkdirSync(outDir, { recursive: true });
 const file = join(outDir, `fresh-install-v${version}.sql`);
 writeFileSync(file, out);
 console.log(`wrote ${file} (schema v${latest})`);
+
+// Upgrade files for phpMyAdmin users: one per starting schema version, each applying every later migration
+// and recording it, exactly as "Apply pending migrations" would. The app's button is still the safer route.
+for (const from of migrations.slice(0, -1).map((m) => m.version)) {
+  const steps = migrations.filter((m) => m.version > from);
+  const up = `-- =====================================================================================
+-- Ads Command Center ${version} : UPGRADE database from schema version ${from} to ${latest}
+--
+-- Use this ONLY on a database that is at schema version ${from}. To check: open the table
+-- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be ${from}.
+--   * Back up first: phpMyAdmin -> Export.
+--   * Deploy the ${version} files and restart the app before or right after importing.
+--   * If it stops with "Duplicate column" or "Table already exists", this upgrade (or part of it)
+--     was already applied: restore your backup and use the file for your real version instead.
+--   * You can also skip this file: Settings -> Database -> "Apply pending migrations" does the same.
+-- Applies: ${steps.map((m) => m.name).join(', ')}
+-- =====================================================================================
+
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
+${steps.map((m) => `-- ---------------------------------------------------------------- ${m.name}\n${m.sql.trim()}\n`).join('\n')}
+-- ---------------------------------------------------------------- record what was applied
+INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
+${steps.map((m) => `  (${m.version}, '${m.name}', '${m.checksum}', 'applied', 'upgrade-sql')`).join(',\n')};
+`;
+  writeFileSync(join(outDir, `upgrade-from-schema-${from}-to-${latest}.sql`), up);
+}
+console.log(`wrote upgrade files for schema ${migrations.slice(0, -1).map((m) => m.version).join(', ')} -> ${latest}`);

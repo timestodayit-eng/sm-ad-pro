@@ -1,5 +1,5 @@
 -- =====================================================================================
--- Ads Command Center 0.4.1 : FRESH INSTALL database (schema version 5)
+-- Ads Command Center 0.4.2 : FRESH INSTALL database (schema version 6)
 --
 -- You normally do NOT need this file: the app's Setup page installs the database itself.
 -- Use it only if you prefer to import with phpMyAdmin (MySQL 8).
@@ -9,7 +9,7 @@
 --     "table already exists" instead of overwriting anything. Never run it over a live database.
 --   * To upgrade an existing install, do NOT use this file. Deploy the new release and press
 --     "Apply pending migrations" in Settings -> Database (see docs/UPGRADE.md).
---   * It records migrations 1-5 in schema_migrations, so the app sees the database as up to
+--   * It records migrations 1-6 in schema_migrations, so the app sees the database as up to
 --     date. After importing, open the panel: it asks for the SETUP_TOKEN and creates the Super Admin.
 -- =====================================================================================
 
@@ -509,10 +509,29 @@ CREATE TABLE cost_alert_settings (
   CONSTRAINT fk_cost_alert_account FOREIGN KEY (ad_account_row_id) REFERENCES meta_ad_accounts(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ---------------------------------------------------------------- 0006_dashboard_prefs
+-- 0006_dashboard_prefs: one shared account order for the whole panel, per-user layout choices
+-- (columns, sort), and 90 days of daily history.
+
+ALTER TABLE meta_ad_accounts ADD COLUMN display_order INT NULL AFTER is_managed;
+
+CREATE TABLE user_preferences (
+  user_id BIGINT UNSIGNED NOT NULL,
+  pref_key VARCHAR(64) NOT NULL,
+  value JSON NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (user_id, pref_key),
+  CONSTRAINT fk_user_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The live sync now keeps 90 days instead of 30; the next sync of each account fetches the older days.
+UPDATE meta_ad_accounts SET live_full_synced_at = NULL;
+
 -- ---------------------------------------------------------------- record what was applied
 INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
   (1, '0001_foundation', 'bed3cda6f6eec68af544ca187e09074281aa5ff13d2a76228b7ec99449af8560', 'applied', 'fresh-install-sql'),
   (2, '0002_media', '69eee0842be8295c40630cf665890f975ccfc44d337a7d2062ed6d42cfa47621', 'applied', 'fresh-install-sql'),
   (3, '0003_two_factor', '47a2f25e0c80314f2e6d2b89362093445a7a2216aff1499fcbebb4194a749d4e', 'applied', 'fresh-install-sql'),
   (4, '0004_live_reporting', '2c7d6b32998a1bb821fae0e851472a114450c595f019eec4a5405971f6d50dc6', 'applied', 'fresh-install-sql'),
-  (5, '0005_lead_call_counts', 'ec6935a177b44b1b895cade7e894adfc0ec2456997932c65ae8d86817cb26af2', 'applied', 'fresh-install-sql');
+  (5, '0005_lead_call_counts', 'ec6935a177b44b1b895cade7e894adfc0ec2456997932c65ae8d86817cb26af2', 'applied', 'fresh-install-sql'),
+  (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'fresh-install-sql');

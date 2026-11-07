@@ -112,6 +112,8 @@ async function bulkUpsert(sqlHead: string, sqlTail: string, rows: unknown[][]) {
 }
 
 const FULL_SYNC_EVERY_MS = 20 * 3600 * 1000;
+/** Days of daily insights kept fresh: enough for "Last month" and custom ranges up to three months back. */
+export const LIVE_HISTORY_DAYS = 90;
 
 export interface LiveSyncResult {
   campaigns: number;
@@ -182,7 +184,7 @@ export async function syncAccountLive(rowId: number, opts: { full?: boolean; now
 
     const until = accountToday(acc.timezone_name, opts.now);
     const full = opts.full || !acc.live_full_synced_at || started.getTime() - new Date(acc.live_full_synced_at).getTime() > FULL_SYNC_EVERY_MS;
-    const since = addDays(until, full ? -29 : -2);
+    const since = addDays(until, full ? -(LIVE_HISTORY_DAYS - 1) : -2);
     let insightRows = 0;
     for (const level of ['campaign', 'ad'] as const) {
       const rows = await graphPaged<any>({

@@ -6,6 +6,7 @@ import { Alert, Badge, Button, Card, CardHeader, ErrorAlert, Field, Input, PageH
 import { ApiError, get, patch, post, put } from '../lib/api';
 import { useI18n } from '../lib/i18n';
 import { CostAlertsCard } from './CostAlerts';
+import { WorkingAccountsCard } from './WorkingAccounts';
 import { usePageTitle, useSession, type Branding } from '../lib/session';
 import { useTheme } from '../lib/theme';
 
@@ -358,11 +359,12 @@ export function SettingsPage() {
   usePageTitle(t('settings'));
   return (
     <>
-      <PageHeader title={t('settings')} description="Branding, cost alerts, team, database and audit history." />
+      <PageHeader title={t('settings')} description="Working accounts, cost alerts, branding, team, database and audit history." />
       <div className="space-y-6">
+        {can('accounts.read') && <WorkingAccountsCard />}
+        {can('accounts.read') && <CostAlertsCard />}
         <AppearanceCard />
         <BrandingCard />
-        {can('accounts.read') && <CostAlertsCard />}
         {can('users.manage') && <UsersCard />}
         {can('schema.migrate') && <DatabaseCard />}
         {can('audit.read') && <AuditCard />}

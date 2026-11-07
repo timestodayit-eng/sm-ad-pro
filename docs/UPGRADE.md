@@ -13,6 +13,12 @@ in `schema_migrations` with a checksum.
    **Settings → Database** and press **Apply pending migrations**. (Command line alternative: `npm run migrate`.)
 5. Check **System Health**: *Database schema* should say up to date.
 
+### phpMyAdmin alternative
+
+Each release ZIP has `database/upgrade-from-schema-N-to-M.sql` files. Open the `schema_migrations` table: the
+highest applied `version` is your N. Back up, then import that one file (Import → choose file → Go). It applies the
+same migrations as the button and records them with matching checksums.
+
 While upgrades are pending, `GET /readyz` returns 503 and background jobs pause, so nothing runs against
 a half-upgraded schema.
 
@@ -30,6 +36,8 @@ a half-upgraded schema.
 Restore the database backup and redeploy the previous release. Migrations are forward-only on purpose.
 
 ## Release notes
+
+- **0.4.2** adds migration `0006_dashboard_prefs`: one shared account order for the whole panel, each user's column and sort choices, and 90 days of history instead of 30. If you upgrade with phpMyAdmin, import `upgrade-from-schema-5-to-6.sql`. After applying it, set your order under **Settings → Working accounts → Arrange order** (drag, or paste your list). The next sync of each account re-reads 90 days, so older dates fill in within a few minutes.
 
 - **0.4.1** adds migration `0005_lead_call_counts`. Leads, calls and messaging conversations are now counted for every account and campaign, and **Settings → Cost alerts** sets limits for daily spend and cost per lead, call, message or result (a default per currency, overridable per account). After applying it, the next sync re-reads the last 30 days so the new counts fill in.
 

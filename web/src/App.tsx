@@ -5,7 +5,9 @@ import { Layout } from './components/Layout';
 import { Button, EmptyState, ErrorAlert } from './components/ui';
 import { ALL_ITEMS } from './lib/nav';
 import { useSession } from './lib/session';
-import { AccountGroupsPage, AccountsPage } from './pages/Accounts';
+import { AccountsPage } from './pages/Accounts';
+import { CampaignsPage } from './pages/Campaigns';
+import { AccountGroupsPage } from './pages/Groups';
 import { LoginPage, SetupPage } from './pages/Auth';
 import { ComingSoonPage } from './pages/ComingSoon';
 import { DashboardPage } from './pages/Dashboard';
@@ -51,6 +53,7 @@ const BUILT: Record<string, ReactNode> = {
   '/': <DashboardPage />,
   '/accounts': <AccountsPage />,
   '/account-groups': <AccountGroupsPage />,
+  '/campaigns': <CampaignsPage />,
   '/notifications': <NotificationsPage />,
   '/health': <HealthPage />,
   '/media': <MediaPage />,

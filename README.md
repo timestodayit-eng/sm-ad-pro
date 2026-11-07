@@ -5,7 +5,7 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.4.1)
+## What works in this release (0.4.2)
 
 | Area | State |
 | --- | --- |
@@ -20,8 +20,8 @@ Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScrip
 | System Health page with an evidence level for every check | Built |
 | Meta connection (Facebook Login for Business), ad account and Page import, account groups, per-account defaults | Built, **not yet verified against a live Meta app** |
 | Media library: direct-to-R2 uploads up to 1 GB, pause/resume/retry, resume after a crash, thumbnails, preview, delete, storage connection check | Built, tested against an S3-compatible store and in a browser; **not yet tested against your real R2 bucket** |
-| Choose which ad accounts to manage; live dashboard with spend, results, CTR/CPC, running campaigns and ads, daily spend, ad thumbnails and Meta's own ad previews, synced every 15 minutes; leads, calls and messages per account and campaign; cost alerts with limits in Settings | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
-| Pause/resume and budget edits, publishing engine, Easy/Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
+| Working accounts chosen once in Settings, one shared account order (drag or paste a list) used on every page; account groups that open the dashboard and Campaigns; date filter (Today, Yesterday, Last 7/14/30 days, This/Last month, custom range, 90 days of history); sortable dashboard columns you can show, hide and reorder; Campaigns page across all working accounts; live dashboard with spend, results, CTR/CPC, running campaigns and ads, daily spend, ad thumbnails and Meta's own ad previews, synced every 15 minutes; leads, calls and messages per account and campaign; cost alerts with limits in Settings | Built, tested against recorded Meta responses and in a browser; **not yet verified against a live Meta account** |
+| Pause/resume and budget edits (including stepped budgets down the account order), publishing engine, Easy/Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
 
 The panel never shows sample data. Pages for modules that are not built say so instead of showing fake numbers or buttons.
 

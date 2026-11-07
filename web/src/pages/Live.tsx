@@ -1,18 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowLeft, Building2, ExternalLink, Eye, ImageOff, LayoutDashboard, Megaphone, MessageCircle, Phone, RefreshCw, UserPlus, Wallet } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, FolderOpen, ListOrdered, Building2, ExternalLink, Eye, ImageOff, LayoutDashboard, Megaphone, MessageCircle, Phone, RefreshCw, UserPlus, Wallet } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorAlert, Modal, PageHeader, Segmented, Select, Skeleton, StatCard, cx, timeAgo, type Tone } from '../components/ui';
-import { get, post } from '../lib/api';
+import { get, post, put } from '../lib/api';
+import { AccountOrderEditor } from './AccountOrder';
+import { ColumnsMenu, DateFilter, fmtRange, HISTORY_DAYS, normaliseColumns, periodLabel, usePeriod, type ColumnKey, type DashboardPrefs, type SortKey } from './liveControls';
 import { usePageTitle, useSession } from '../lib/session';
-
-export type Period = 'today' | 'yesterday' | '7d' | '30d';
-export const PERIODS: { value: Period; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: '7d', label: '7 days' },
-  { value: '30d', label: '30 days' },
-];
 
 interface Result { type: string; label: string; count: number; costPer: number | null }
 interface Contact { count: number; costPer: number | null }
@@ -182,20 +176,122 @@ const oldest = (xs: (string | null)[]) => xs.reduce<string | null>((a, b) => (!b
 
 // ---------- dashboard ----------
 
+type Row = any;
+interface ColumnDef {
+  key: ColumnKey;
+  label: string;
+  title?: string;
+  align?: 'right';
+  /** Value used for sorting; null always sorts last. */
+  value: (a: Row) => number | string | null;
+  cell: (a: Row) => ReactNode;
+  needsMetrics?: boolean;
+  /** Default direction on first click. */
+  firstDir?: 'asc' | 'desc';
+}
+
+const COLUMNS: ColumnDef[] = [
+  { key: 'spend', label: 'Spend', align: 'right', needsMetrics: true, value: (a) => a.metrics?.spend ?? null, cell: (a) => <span className="font-medium text-ink tabular-nums">{money(a.metrics.spend, a.currency)}</span> },
+  { key: 'leads', label: 'Leads', align: 'right', needsMetrics: true, value: (a) => a.metrics?.contacts.leads.count ?? null, cell: (a) => <ContactCell c={a.metrics.contacts.leads} currency={a.currency} /> },
+  { key: 'calls', label: 'Calls', align: 'right', needsMetrics: true, value: (a) => a.metrics?.contacts.calls.count ?? null, cell: (a) => <ContactCell c={a.metrics.contacts.calls} currency={a.currency} /> },
+  { key: 'messages', label: 'Messages', align: 'right', needsMetrics: true, value: (a) => a.metrics?.contacts.messages.count ?? null, cell: (a) => <ContactCell c={a.metrics.contacts.messages} currency={a.currency} /> },
+  { key: 'results', label: 'Results', title: "Counted by each campaign's objective, like Ads Manager's Results column", needsMetrics: true, value: (a) => a.metrics?.results[0]?.count ?? null, cell: (a) => <ResultCell m={a.metrics} currency={a.currency} /> },
+  { key: 'ctr', label: 'CTR', align: 'right', needsMetrics: true, value: (a) => a.metrics?.ctr ?? null, cell: (a) => <span className="tabular-nums">{pct(a.metrics.ctr)}</span> },
+  { key: 'cpc', label: 'Cost per click', align: 'right', needsMetrics: true, firstDir: 'asc', value: (a) => a.metrics?.cpc ?? null, cell: (a) => <span className="tabular-nums">{money(a.metrics.cpc, a.currency)}</span> },
+  {
+    key: 'running', label: 'Running', value: (a) => a.ads.active,
+    cell: (a) => (
+      <div className="whitespace-nowrap">
+        <div className="tabular-nums text-ink">{plural(a.ads.active, 'ad')} <span className="text-ink-3">· {plural(a.campaigns.active, 'campaign')}</span></div>
+        {a.ads.disapproved > 0 && <div className="text-xs text-bad">{a.ads.disapproved} rejected</div>}
+      </div>
+    ),
+  },
+  { key: 'budget', label: 'Daily budget', align: 'right', value: (a) => a.activeDailyBudget, cell: (a) => <span className="tabular-nums">{money(a.activeDailyBudget, a.currency)}</span> },
+  { key: 'trend', label: '30-day trend', title: 'Daily spend for the 30 days up to the end of the chosen period', value: (a) => a.dailySpend?.reduce((n: number, d: any) => n + d.spend, 0) ?? null, cell: (a) => (a.dailySpend ? <Sparkline data={a.dailySpend} currency={a.currency} /> : <span className="text-ink-3">—</span>) },
+  {
+    key: 'synced', label: 'Synced', firstDir: 'asc', value: (a) => a.syncedAt,
+    cell: (a) => a.syncError ? (
+      <span className="inline-flex max-w-[220px] items-start gap-1 text-xs text-bad" title={a.syncError}><AlertTriangle className="mt-0.5 size-3.5 shrink-0" /><span className="line-clamp-2">{a.syncError}</span></span>
+    ) : (
+      <span className="whitespace-nowrap text-xs text-ink-3">{timeAgo(a.syncedAt)}</span>
+    ),
+  },
+];
+const COL = Object.fromEntries(COLUMNS.map((c) => [c.key, c])) as Record<ColumnKey, ColumnDef>;
+const COLUMN_LABELS = Object.fromEntries(COLUMNS.map((c) => [c.key, c.label])) as Record<ColumnKey, string>;
+
+/** Rows arrive in the panel's account order; a column sort is applied on top. */
+function sortRows(ordered: Row[], sort: DashboardPrefs['sort']) {
+  if (!sort || sort.key === 'custom') return ordered;
+  const val = sort.key === 'name' ? (a: Row) => a.name.toLowerCase() : COL[sort.key].value;
+  const dir = sort.dir === 'asc' ? 1 : -1;
+  return ordered
+    .map((r, i) => ({ r, i, v: val(r) }))
+    .sort((a, b) => (a.v == null && b.v == null ? a.i - b.i : a.v == null ? 1 : b.v == null ? -1 : a.v < b.v ? -dir : a.v > b.v ? dir : a.i - b.i))
+    .map((x) => x.r);
+}
+
+function useDashboardPrefs() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['prefs', 'dashboard'], queryFn: () => get<DashboardPrefs>('/me/preferences/dashboard'), staleTime: Infinity });
+  const save = useMutation({
+    mutationFn: (p: DashboardPrefs) => put<DashboardPrefs>('/me/preferences/dashboard', p),
+    onMutate: (p) => qc.setQueryData(['prefs', 'dashboard'], p),
+    onError: () => qc.invalidateQueries({ queryKey: ['prefs', 'dashboard'] }),
+  });
+  const prefs: DashboardPrefs = { columns: normaliseColumns(q.data?.columns ?? []), sort: q.data?.sort ?? null };
+  return { prefs, loaded: q.isSuccess, save: (patch: Partial<DashboardPrefs>) => save.mutate({ ...prefs, ...patch }), saving: save.isPending, error: save.error };
+}
+
+/** ?group=ID keeps the chosen account group in the URL, next to the date range. */
+export function useGroup() {
+  const [sp, setSp] = useSearchParams();
+  const raw = Number(sp.get('group'));
+  const group = Number.isInteger(raw) && raw > 0 ? raw : null;
+  const set = (g: number | null) =>
+    setSp((prev) => {
+      const next = new URLSearchParams(prev);
+      if (g) next.set('group', String(g));
+      else next.delete('group');
+      return next;
+    }, { replace: true });
+  return { group, set, qs: group ? `&group=${group}` : '' };
+}
+
+export function GroupPicker({ group, onChange }: { group: number | null; onChange: (g: number | null) => void }) {
+  const q = useQuery({ queryKey: ['account-groups'], queryFn: () => get('/account-groups') });
+  const groups: any[] = q.data?.items ?? [];
+  if (!groups.length && !group) return null;
+  return (
+    <label className="flex items-center gap-2 text-sm text-ink-3">
+      <FolderOpen className="size-4" />
+      <span className="sr-only">Account group</span>
+      <Select className="h-9 w-56" value={group ?? ''} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+        <option value="">All working accounts</option>
+        {groups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.managed} working)</option>)}
+      </Select>
+    </label>
+  );
+}
+
 export function LiveDashboard({ greeting }: { greeting: string }) {
   const { can } = useSession();
-  const [period, setPeriod] = useState<Period>('today');
-  const q = useQuery({ queryKey: ['live', 'overview', period], queryFn: () => get(`/live/overview?period=${period}`), refetchInterval: 60_000 });
+  const { period, qs, set: setPeriod } = usePeriod('today');
+  const { group, set: setGroup, qs: groupQs } = useGroup();
+  const q = useQuery({ queryKey: ['live', 'overview', qs, group], queryFn: () => get(`/live/overview?${qs}${groupQs}`), refetchInterval: 60_000, placeholderData: keepPreviousData });
   const d = q.data;
-  const accounts: any[] = d?.accounts ?? [];
+  const accounts: Row[] = d?.accounts ?? [];
   const syncedAt = oldest(accounts.map((a) => a.syncedAt));
+  const range = accounts[0]?.range;
+  const linkQs = `?${qs}${groupQs}`;
 
   return (
     <>
       <PageHeader
         title={greeting}
         description="Live spend, results, campaigns and ads for the accounts you manage. Numbers come straight from Meta."
-        actions={d?.managedCount ? <RefreshButton syncedAt={syncedAt} /> : undefined}
+        actions={d?.managedCount ? <RefreshButton syncedAt={syncedAt} accountIds={group ? accounts.map((a) => a.id) : undefined} /> : undefined}
       />
       {q.error && <ErrorAlert error={q.error} />}
 
@@ -222,111 +318,155 @@ export function LiveDashboard({ greeting }: { greeting: string }) {
         </Card>
       ) : d ? (
         <>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} />
-            {can('accounts.manage') && (
-              <Link to="/accounts?pick=1" className="text-sm font-medium text-brand hover:underline">
-                Change accounts ({d.managedCount} of {d.availableCount})
-              </Link>
-            )}
+          <div className="mb-4 flex flex-col gap-3">
+            <DateFilter period={period} onChange={setPeriod} range={range} />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <GroupPicker group={group} onChange={setGroup} />
+                {range && <span className="text-sm text-ink-2">{periodLabel(period)} · <span className="tabular-nums">{fmtRange(range)}</span></span>}
+                {q.isFetching && !q.isLoading && <span className="text-xs text-ink-3">Updating…</span>}
+              </div>
+              {can('accounts.manage') && (
+                <Link to="/settings#working-accounts" className="text-sm font-medium text-brand hover:underline">
+                  Working accounts: {d.managedCount} of {d.availableCount}
+                </Link>
+              )}
+            </div>
           </div>
-
-          {d.totalsByCurrency.length === 0 ? (
-            <Alert tone="info" title="First sync in progress">
-              The panel is fetching campaigns, ads and the last 30 days of results from Meta. This usually takes a minute or two.
-            </Alert>
-          ) : (
-            d.totalsByCurrency.map((t: any) => {
-              const active = accounts.filter((a) => a.currency === t.currency);
-              return (
-                <div key={t.currency} className="mb-4">
-                  {d.totalsByCurrency.length > 1 && <div className="mb-2 text-xs font-semibold tracking-wide text-ink-3 uppercase">{t.currency} accounts · spend is never added across currencies</div>}
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                    <StatCard label="Spend" value={money(t.spend, t.currency)} icon={<Wallet className="size-4" />} sub={`${plural(t.accounts, 'account')} · daily budget ${money(t.activeDailyBudget, t.currency)} · CTR ${pct(t.ctr)}`} />
-                    <StatCard label="Leads" value={num(t.contacts.leads.count)} icon={<UserPlus className="size-4" />} sub={t.contacts.leads.costPer != null ? `${money(t.contacts.leads.costPer, t.currency)} per lead` : 'No leads in this period'} />
-                    <StatCard label="Calls" value={num(t.contacts.calls.count)} icon={<Phone className="size-4" />} sub={t.contacts.calls.costPer != null ? `${money(t.contacts.calls.costPer, t.currency)} per call` : 'No calls in this period'} />
-                    <StatCard label="Messages" value={num(t.contacts.messages.count)} icon={<MessageCircle className="size-4" />} sub={t.contacts.messages.costPer != null ? `${money(t.contacts.messages.costPer, t.currency)} per conversation` : 'No conversations in this period'} />
-                    <StatCard
-                      label="Running now"
-                      value={plural(active.reduce((n, a) => n + a.ads.active, 0), 'ad')}
-                      icon={<Megaphone className="size-4" />}
-                      tone={active.some((a) => a.ads.disapproved) ? 'warn' : undefined}
-                      sub={`${plural(active.reduce((n, a) => n + a.campaigns.active, 0), 'active campaign')}${active.some((a) => a.ads.disapproved) ? ` · ${plural(active.reduce((n, a) => n + a.ads.disapproved, 0), 'rejected ad')}` : ''}`}
-                    />
-                  </div>
-                </div>
-              );
-            })
+          {accounts.some((a) => a.incomplete) && (
+            <div className="mb-4"><Alert tone="warn" title="Part of this range is older than the panel keeps">The panel stores the last {HISTORY_DAYS} days. Days before that are not in these totals; use Ads Manager for older reports.</Alert></div>
           )}
 
-          <Card className="mt-2">
-            <CardHeader title="Your accounts" description={`${PERIODS.find((p) => p.value === period)!.label}, in each account’s own time zone. Click an account for campaigns, ads and previews.`} />
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1280px] text-sm">
-                <thead>
-                  <tr className="border-b border-line text-left text-xs font-semibold tracking-wide text-ink-3 uppercase">
-                    <th className="px-5 py-3">Account</th>
-                    <th className="px-2 py-3 text-right">Spend</th>
-                    <th className="px-2 py-3 text-right">Leads</th>
-                    <th className="px-2 py-3 text-right">Calls</th>
-                    <th className="px-2 py-3 text-right">Messages</th>
-                    <th className="px-2 py-3" title="Counted by each campaign's objective, like Ads Manager's Results column">Results</th>
-                    <th className="px-2 py-3 text-right">CTR</th>
-                    <th className="px-2 py-3">Running</th>
-                    <th className="px-2 py-3 text-right">Daily budget</th>
-                    <th className="px-2 py-3">Last 30 days</th>
-                    <th className="px-5 py-3">Synced</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {accounts.map((a) => (
-                    <tr key={a.id} className="hover:bg-surface-2">
-                      <td className="min-w-[230px] px-5 py-3">
-                        <Link to={`/live/${a.id}`} className="font-medium text-ink hover:text-brand hover:underline">{a.name}</Link>
-                        <div className="text-xs text-ink-3">act_{a.accountId} · {a.currency}{a.accountStatus !== 1 && <span className="text-bad"> · account not active</span>}</div>
-                        {a.costAlertsToday > 0 && (
-                          <Link to="/notifications" className="mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-warn-bg px-1.5 py-0.5 text-xs font-medium text-warn hover:underline">
-                            <AlertTriangle className="size-3" /> {plural(a.costAlertsToday, 'cost alert')} today
-                          </Link>
-                        )}
-                      </td>
-                      {a.metrics ? (
-                        <>
-                          <td className="px-2 py-3 text-right font-medium text-ink tabular-nums">{money(a.metrics.spend, a.currency)}</td>
-                          <td className="px-2 py-3"><ContactCell c={a.metrics.contacts.leads} currency={a.currency} /></td>
-                          <td className="px-2 py-3"><ContactCell c={a.metrics.contacts.calls} currency={a.currency} /></td>
-                          <td className="px-2 py-3"><ContactCell c={a.metrics.contacts.messages} currency={a.currency} /></td>
-                          <td className="px-2 py-3"><ResultCell m={a.metrics} currency={a.currency} /></td>
-                          <td className="px-2 py-3 text-right tabular-nums">{pct(a.metrics.ctr)}</td>
-                        </>
-                      ) : (
-                        <td colSpan={6} className="px-2 py-3 text-ink-3">{a.syncError ? 'Could not sync, see the error on the right' : 'Waiting for the first sync…'}</td>
-                      )}
-                      <td className="whitespace-nowrap px-2 py-3">
-                        <div className="tabular-nums text-ink">{plural(a.ads.active, 'ad')} <span className="text-ink-3">· {plural(a.campaigns.active, 'campaign')}</span></div>
-                        {a.ads.disapproved > 0 && <div className="text-xs text-bad">{a.ads.disapproved} rejected</div>}
-                      </td>
-                      <td className="px-2 py-3 text-right tabular-nums">{money(a.activeDailyBudget, a.currency)}</td>
-                      <td className="px-2 py-3">{a.dailySpend ? <Sparkline data={a.dailySpend} currency={a.currency} /> : <span className="text-ink-3">—</span>}</td>
-                      <td className="max-w-[220px] px-5 py-3 text-xs">
-                        {a.syncError ? (
-                          <span className="inline-flex items-start gap-1 text-bad" title={a.syncError}><AlertTriangle className="mt-0.5 size-3.5 shrink-0" /><span className="line-clamp-2">{a.syncError}</span></span>
-                        ) : (
-                          <span className="whitespace-nowrap text-ink-3">{timeAgo(a.syncedAt)}</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          {d.group && accounts.length === 0 ? (
+            <Card>
+              <EmptyState icon={<FolderOpen className="size-6" />} title={`No dashboard accounts in “${d.group.name}”`} action={<Button variant="secondary" onClick={() => setGroup(null)}>Show all accounts</Button>}>
+                This group has {plural(d.group.members, 'account')}, but none of them is a working account. Add them in Settings → Working accounts.
+              </EmptyState>
+            </Card>
+          ) : (
+            <>
+              {d.totalsByCurrency.length === 0 ? (
+                <Alert tone="info" title="First sync in progress">
+                  The panel is fetching campaigns, ads and the last {HISTORY_DAYS} days of results from Meta. This usually takes a minute or two.
+                </Alert>
+              ) : (
+                d.totalsByCurrency.map((t: any) => {
+                  const active = accounts.filter((a) => a.currency === t.currency);
+                  return (
+                    <div key={t.currency} className="mb-4">
+                      {d.totalsByCurrency.length > 1 && <div className="mb-2 text-xs font-semibold tracking-wide text-ink-3 uppercase">{t.currency} accounts · spend is never added across currencies</div>}
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                        <StatCard label="Spend" value={money(t.spend, t.currency)} icon={<Wallet className="size-4" />} sub={`${plural(t.accounts, 'account')} · daily budget ${money(t.activeDailyBudget, t.currency)} · CTR ${pct(t.ctr)}`} />
+                        <StatCard label="Leads" value={num(t.contacts.leads.count)} icon={<UserPlus className="size-4" />} sub={t.contacts.leads.costPer != null ? `${money(t.contacts.leads.costPer, t.currency)} per lead` : 'No leads in this period'} />
+                        <StatCard label="Calls" value={num(t.contacts.calls.count)} icon={<Phone className="size-4" />} sub={t.contacts.calls.costPer != null ? `${money(t.contacts.calls.costPer, t.currency)} per call` : 'No calls in this period'} />
+                        <StatCard label="Messages" value={num(t.contacts.messages.count)} icon={<MessageCircle className="size-4" />} sub={t.contacts.messages.costPer != null ? `${money(t.contacts.messages.costPer, t.currency)} per conversation` : 'No conversations in this period'} />
+                        <StatCard
+                          label="Running now"
+                          value={plural(active.reduce((n, a) => n + a.ads.active, 0), 'ad')}
+                          icon={<Megaphone className="size-4" />}
+                          tone={active.some((a) => a.ads.disapproved) ? 'warn' : undefined}
+                          sub={`${plural(active.reduce((n, a) => n + a.campaigns.active, 0), 'active campaign')}${active.some((a) => a.ads.disapproved) ? ` · ${plural(active.reduce((n, a) => n + a.ads.disapproved, 0), 'rejected ad')}` : ''}`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <AccountsTable accounts={accounts} linkQs={linkQs} title={d.group ? `Accounts in “${d.group.name}”` : 'Your accounts'} groupName={d.group?.name} />
+            </>
+          )}
           <p className="mt-3 text-xs text-ink-3">
-            Synced from Meta Insights every 15 minutes (Meta itself can lag up to about 15 minutes). Leads, calls and messages are counted for every campaign whatever its objective; Results follows each campaign’s objective like Ads Manager. Set cost alerts in Settings. Pausing, budgets and new ads come in the next releases.
+            Synced from Meta Insights every 15 minutes (Meta itself can lag up to about 15 minutes). Dates follow each account’s own time zone; “Last 7 days” ends yesterday, like Ads Manager. Leads, calls and messages are counted for every campaign whatever its objective; Results follows each campaign’s objective. Set cost alerts in Settings.
           </p>
         </>
       ) : null}
     </>
+  );
+}
+
+function AccountsTable({ accounts, linkQs, title, groupName }: { accounts: Row[]; linkQs: string; title: string; groupName?: string }) {
+  const { can } = useSession();
+  const { prefs, save, error } = useDashboardPrefs();
+  const [arranging, setArranging] = useState(false);
+  const cols = prefs.columns.filter((c) => c.visible).map((c) => COL[c.key]);
+  const sort = prefs.sort ?? { key: 'custom' as const, dir: 'asc' as const };
+  const rows = sortRows(accounts, sort);
+  const sortBy = (key: SortKey, firstDir: 'asc' | 'desc') => {
+    const next = sort.key === key ? { key, dir: sort.dir === 'asc' ? ('desc' as const) : ('asc' as const) } : { key, dir: firstDir };
+    save({ sort: next });
+  };
+  const Th = ({ k, label, align, title: tip, firstDir = 'desc', className }: { k: SortKey; label: string; align?: 'right'; title?: string; firstDir?: 'asc' | 'desc'; className?: string }) => {
+    const on = sort.key === k;
+    return (
+      <th className={cx('py-3', className ?? 'px-2', align === 'right' && 'text-right')} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined} title={tip}>
+        <button className={cx('inline-flex items-center gap-1 uppercase tracking-wide hover:text-ink', on && 'text-ink')} onClick={() => sortBy(k, firstDir)}>
+          {label}
+          {on ? (sort.dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUpDown className="size-3 opacity-40" />}
+        </button>
+      </th>
+    );
+  };
+
+  return (
+    <Card className="mt-2">
+      <CardHeader
+        title={title}
+        description={sort.key === 'custom' ? 'In your account order. Click a column name to sort by it. Click an account for campaigns, ads and previews.' : 'Sorted by a column for now. Your account order is still saved.'}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {sort.key !== 'custom' && (
+              <Button variant="secondary" size="sm" onClick={() => save({ sort: { key: 'custom', dir: 'asc' } })}>Back to my order</Button>
+            )}
+            {can('accounts.manage') && (
+              <Button variant="secondary" size="sm" icon={<ListOrdered className="size-3.5" />} onClick={() => setArranging(true)} disabled={accounts.length < 2}>Arrange order</Button>
+            )}
+            <ColumnsMenu columns={prefs.columns} labels={COLUMN_LABELS} onChange={(columns) => save({ columns })} />
+          </div>
+        }
+      />
+      {error && <div className="px-5 pb-3"><ErrorAlert error={error} title="Could not save your layout" /></div>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" style={{ minWidth: 300 + cols.length * 110 }}>
+          <thead>
+            <tr className="border-b border-line text-left text-xs font-semibold tracking-wide text-ink-3 uppercase">
+              <th className="w-10 py-3 pl-5 text-right" title="Place in your account order">
+                <button className={cx('uppercase hover:text-ink', sort.key === 'custom' && 'text-ink')} onClick={() => save({ sort: { key: 'custom', dir: 'asc' } })}>#</button>
+              </th>
+              <Th k="name" label="Account" firstDir="asc" className="px-3" />
+              {cols.map((c) => <Th key={c.key} k={c.key} label={c.label} align={c.align} title={c.title} firstDir={c.firstDir} />)}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((a: Row) => (
+              <tr key={a.id} className="hover:bg-surface-2">
+                <td className="py-3 pl-5 text-right text-xs text-ink-3 tabular-nums">{accounts.indexOf(a) + 1}</td>
+                <td className="min-w-[230px] px-3 py-3">
+                  <Link to={`/live/${a.id}${linkQs}`} className="font-medium text-ink hover:text-brand hover:underline">{a.name}</Link>
+                  <div className="text-xs text-ink-3">act_{a.accountId} · {a.currency}{a.accountStatus !== 1 && <span className="text-bad"> · account not active</span>}</div>
+                  {!a.metrics && <div className="text-xs text-ink-3">{a.syncError ? 'Could not sync, see Synced' : 'Waiting for the first sync…'}</div>}
+                  {a.costAlertsToday > 0 && (
+                    <Link to="/notifications" className="mt-1 inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-warn-bg px-1.5 py-0.5 text-xs font-medium text-warn hover:underline">
+                      <AlertTriangle className="size-3" /> {plural(a.costAlertsToday, 'cost alert')} today
+                    </Link>
+                  )}
+                </td>
+                {cols.map((c) => (
+                  <td key={c.key} className={cx('px-2 py-3', c.align === 'right' && 'text-right')}>
+                    {c.needsMetrics && !a.metrics ? <span className="text-ink-3">—</span> : c.cell(a)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <AccountOrderEditor
+        open={arranging}
+        onClose={() => setArranging(false)}
+        subset={groupName ? accounts.map((a) => a.id) : undefined}
+        title={groupName ? `Account order in “${groupName}”` : 'Account order'}
+      />
+    </Card>
   );
 }
 
@@ -364,10 +504,11 @@ function PreviewModal({ ad, onClose }: { ad: any | null; onClose: () => void }) 
 
 export function LiveAccountPage() {
   const { id } = useParams();
-  const [period, setPeriod] = useState<Period>('7d');
+  const { period, qs, set: setPeriod } = usePeriod('7d');
+  const [sp] = useSearchParams();
   const [preview, setPreview] = useState<any | null>(null);
   const [adFilter, setAdFilter] = useState<'running' | 'all'>('running');
-  const q = useQuery({ queryKey: ['live', 'account', id, period], queryFn: () => get(`/live/accounts/${id}?period=${period}`), refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ['live', 'account', id, qs], queryFn: () => get(`/live/accounts/${id}?${qs}`), refetchInterval: 60_000, placeholderData: keepPreviousData });
   const d = q.data;
   usePageTitle(d?.account.name ?? 'Account');
   const cur = d?.account.currency ?? 'USD';
@@ -375,10 +516,10 @@ export function LiveAccountPage() {
 
   return (
     <>
-      <Link to="/" className="mb-3 inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink"><ArrowLeft className="size-4" /> Dashboard</Link>
+      <Link to={`/?${sp.toString()}`} className="mb-3 inline-flex items-center gap-1 text-sm text-ink-3 hover:text-ink"><ArrowLeft className="size-4" /> Dashboard</Link>
       <PageHeader
         title={d?.account.name ?? ' '}
-        description={d ? `act_${d.account.accountId} · ${d.account.currency} · ${d.account.timezone ?? 'UTC'} · ${d.range.since === d.range.until ? d.range.since : `${d.range.since} to ${d.range.until}`}` : undefined}
+        description={d ? `act_${d.account.accountId} · ${d.account.currency} · ${d.account.timezone ?? 'UTC'}` : undefined}
         actions={
           d && (
             <div className="flex items-center gap-3">
@@ -396,7 +537,11 @@ export function LiveAccountPage() {
       {d && !d.account.synced && !d.account.syncError && <Alert tone="info" title="First sync in progress">Campaigns, ads and results appear here within a minute or two.</Alert>}
       {d?.account.synced && (
         <>
-          <div className="mb-4"><Segmented label="Period" value={period} onChange={setPeriod} options={PERIODS} /></div>
+          <div className="mb-4 space-y-2">
+            <DateFilter period={period} onChange={setPeriod} range={d.range} />
+            <div className="text-sm text-ink-2">{periodLabel(period)} · <span className="tabular-nums">{fmtRange(d.range)}</span>{q.isFetching && <span className="ml-2 text-xs text-ink-3">Updating…</span>}</div>
+            {d.incomplete && <Alert tone="warn" title="Part of this range is older than the panel keeps">The panel stores the last {HISTORY_DAYS} days. Days before that are not in these totals.</Alert>}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <StatCard label="Spend" value={money(d.totals.spend, cur)} icon={<Wallet className="size-4" />} sub={`${num(d.totals.impressions)} impressions · CTR ${pct(d.totals.ctr)}`} />
             <StatCard label="Leads" value={num(d.totals.contacts.leads.count)} icon={<UserPlus className="size-4" />} sub={d.totals.contacts.leads.costPer != null ? `${money(d.totals.contacts.leads.costPer, cur)} per lead` : 'No leads in this period'} />
