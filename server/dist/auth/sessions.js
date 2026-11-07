@@ -1,9 +1,11 @@
 import { env } from '../config/env.js';
 import { execute, queryOne } from '../db/pool.js';
 import { hmac, randomToken, safeEqual } from '../lib/crypto.js';
-import { errors } from '../lib/errors.js';
+import { AppError, errors } from '../lib/errors.js';
 import { can } from './rbac.js';
 export const SESSION_COOKIE = 'acc_sid';
+/** Roles that must use two-step login. */
+export const MFA_REQUIRED_ROLES = ['super_admin', 'admin'];
 /** The cookie holds a random id; the database stores its HMAC so a leaked DB dump cannot be replayed. */
 const storedId = (raw) => hmac(env().SESSION_SECRET, raw);
 export async function createSession(res, req, userId) {
@@ -45,6 +47,7 @@ export async function loadSession(req, _res, next) {
                 role: row.role,
                 aiLevel: Number(row.ai_level),
                 allAccounts: Boolean(row.all_accounts),
+                mfaEnabled: await queryOne(`SELECT totp_enabled_at FROM users WHERE id=?`, [row.id]).then((r) => Boolean(r?.totp_enabled_at), () => null),
             };
             req.sessionId = row.sid;
             req.csrfToken = row.csrf_token;
@@ -61,6 +64,24 @@ export async function loadSession(req, _res, next) {
 export function requireAuth(req, _res, next) {
     if (!req.user)
         return next(errors.unauthenticated());
+    next();
+}
+/**
+ * Admins without two-step login can only reach the endpoints needed to set it up (and to apply schema upgrades,
+ * so an upgrade can never lock everyone out).
+ */
+const MFA_SETUP_ALLOWED = [/^\/auth\//, /^\/admin\/schema/, /^\/public\//];
+export function requireMfaSetup(req, _res, next) {
+    const u = req.user;
+    if (u && u.mfaEnabled === false && MFA_REQUIRED_ROLES.includes(u.role) && !MFA_SETUP_ALLOWED.some((r) => r.test(req.path))) {
+        return next(new AppError({
+            code: 'MFA_SETUP_REQUIRED',
+            message: 'Set up two-step login before using the panel.',
+            status: 403,
+            category: 'auth',
+            hint: 'Open Settings → Security and scan the QR code with an authenticator app.',
+        }));
+    }
     next();
 }
 export function requirePermission(perm, what) {

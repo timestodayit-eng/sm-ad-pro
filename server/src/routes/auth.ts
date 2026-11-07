@@ -7,9 +7,10 @@ import { migrate, schemaStatus } from '../db/migrations.js';
 import { hashPassword, safeEqual, verifyPassword } from '../lib/crypto.js';
 import { AppError, errors } from '../lib/errors.js';
 import { asyncHandler, parse } from '../lib/http.js';
-import { createSession, destroySession, requireAuth } from '../auth/sessions.js';
+import { createSession, destroySession, MFA_REQUIRED_ROLES, requireAuth } from '../auth/sessions.js';
 import { permissionsFor, ROLE_LABELS } from '../auth/rbac.js';
 import { audit } from '../services/audit.js';
+import { startChallenge } from './security.js';
 import { getBranding, DEFAULT_BRANDING } from '../services/settings.js';
 
 export const authRouter = Router();
@@ -127,6 +128,11 @@ authRouter.post(
       await audit({ orgId: user.org_id, actorUserId: user.id, action: 'auth.login_failed', ip: req.ip });
       throw fail;
     }
+    if (user.totp_enabled_at) {
+      // Password is right; the session is created only after the authenticator or recovery code (step 2).
+      await execute(`UPDATE users SET failed_logins=0, locked_until=NULL WHERE id=?`, [user.id]);
+      return res.json({ ok: true, mfaRequired: true, challenge: await startChallenge(Number(user.id)) });
+    }
     await execute(`UPDATE users SET failed_logins=0, locked_until=NULL, last_login_at=CURRENT_TIMESTAMP(3) WHERE id=?`, [user.id]);
     const csrf = await createSession(res, req, Number(user.id));
     await audit({ orgId: user.org_id, actorUserId: user.id, action: 'auth.login', ip: req.ip });
@@ -153,6 +159,7 @@ authRouter.get(
       csrfToken: req.csrfToken,
       branding: await getBranding(u.orgId),
       features: features(),
+      mfa: { enabled: u.mfaEnabled, required: MFA_REQUIRED_ROLES.includes(u.role), setupRequired: u.mfaEnabled === false && MFA_REQUIRED_ROLES.includes(u.role) },
     });
   }),
 );

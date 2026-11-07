@@ -5,12 +5,13 @@ reporting from synced Meta data, and an AI Copilot that works through approved, 
 
 Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScript (server), MySQL 8.
 
-## What works in this release (0.2.0)
+## What works in this release (0.3.0)
 
 | Area | State |
 | --- | --- |
 | First-run Setup page: install the database and create the Super Admin, no SSH needed | Built and tested |
 | Sign-in, sessions, CSRF and origin checks, login lockout | Built and tested |
+| Two-step login (authenticator app + 10 recovery codes), required for Super Admin and Admin, Super Admin reset for lost phones | Built and tested, checked in a browser |
 | Roles: Super Admin, Admin, Media Buyer, Analyst, Viewer | Built and tested |
 | Audit log of every admin change | Built and tested |
 | White-label branding, light / dark / follow-device theme, Bengali / English | Built, checked in a browser |
@@ -19,7 +20,7 @@ Stack: React + Vite + TypeScript + Tailwind (web), Node 22 + Express + TypeScrip
 | System Health page with an evidence level for every check | Built |
 | Meta connection (Facebook Login for Business), ad account and Page import, account groups, per-account defaults | Built, **not yet verified against a live Meta app** |
 | Media library: direct-to-R2 uploads up to 1 GB, pause/resume/retry, resume after a crash, thumbnails, preview, delete, storage connection check | Built, tested against an S3-compatible store and in a browser; **not yet tested against your real R2 bucket** |
-| Publishing engine, Easy/Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing, two-step login | Not built yet; each page in the panel says which phase it ships in |
+| Publishing engine, Easy/Advanced Ads, reports, AI Copilot, AI documents, alerts, creative leaderboard, budget pacing | Not built yet; each page in the panel says which phase it ships in |
 
 The panel never shows sample data. Pages for modules that are not built say so instead of showing fake numbers or buttons.
 
@@ -45,6 +46,10 @@ TEST_S3_ENDPOINT=http://127.0.0.1:5055 npm test
 ```
 
 CI (`.github/workflows/ci.yml`) runs typecheck, build and the full test suite against MySQL 8 on every push.
+
+## Database file
+
+`database/fresh-install-v<version>.sql` is the complete MySQL 8 schema for a new, empty database, built from `server/migrations/` by `npm run build:sql`. The Setup page applies the same migrations automatically, so importing it is optional. Upgrades always go through the migration runner, never this file.
 
 ## Docs
 

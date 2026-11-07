@@ -71,14 +71,72 @@ export function LoginPage() {
   usePageTitle(t('signIn'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
+  const done = async (csrf: string) => {
+    setCsrfToken(csrf);
+    await refresh();
+    nav('/', { replace: true });
+  };
   const m = useMutation({
-    mutationFn: () => post<{ csrfToken: string }>('/auth/login', { email, password }),
+    mutationFn: () => post<{ csrfToken?: string; mfaRequired?: boolean; challenge?: string }>('/auth/login', { email, password }),
     onSuccess: async (r) => {
-      setCsrfToken(r.csrfToken);
-      await refresh();
-      nav('/', { replace: true });
+      if (r.mfaRequired && r.challenge) return setChallenge(r.challenge);
+      await done(r.csrfToken!);
     },
   });
+  const verify = useMutation({
+    mutationFn: () => post<{ csrfToken: string }>('/auth/login/verify', { challenge, code }),
+    onSuccess: (r) => done(r.csrfToken),
+    onError: (e) => {
+      if (e instanceof ApiError && ['MFA_CHALLENGE_EXPIRED', 'MFA_TOO_MANY_ATTEMPTS'].includes(e.body.code)) {
+        setChallenge(null);
+        setCode('');
+      }
+    },
+  });
+
+  if (challenge) {
+    return (
+      <AuthShell title="Two-step login" subtitle={useRecovery ? 'Enter one of your saved recovery codes.' : 'Enter the 6-digit code from your authenticator app.'}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            verify.mutate();
+          }}
+          className="space-y-5"
+          noValidate
+        >
+          {verify.error && <ErrorAlert error={verify.error} />}
+          <Field label={useRecovery ? 'Recovery code' : 'Authentication code'} htmlFor="code">
+            <Input
+              id="code"
+              autoFocus
+              autoComplete="one-time-code"
+              inputMode={useRecovery ? 'text' : 'numeric'}
+              placeholder={useRecovery ? 'XXXX-XXXX' : '123456'}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="text-center font-mono text-lg tracking-[0.25em]"
+            />
+          </Field>
+          <Button type="submit" size="lg" className="w-full" loading={verify.isPending} icon={<ShieldCheck className="size-4" />}>
+            Verify and sign in
+          </Button>
+          <div className="flex justify-between text-sm">
+            <button type="button" className="font-medium text-brand hover:underline" onClick={() => (setUseRecovery(!useRecovery), setCode(''))}>
+              {useRecovery ? 'Use authenticator app' : 'Use a recovery code'}
+            </button>
+            <button type="button" className="text-ink-3 hover:text-ink" onClick={() => (setChallenge(null), setCode(''), verify.reset())}>
+              Back
+            </button>
+          </div>
+        </form>
+      </AuthShell>
+    );
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     m.mutate();

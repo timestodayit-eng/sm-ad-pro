@@ -79,8 +79,8 @@ export function DashboardPage() {
               { label: 'Background scheduler', state: 'done' },
               { label: 'Meta connection and account import', state: 'pending', note: 'needs your Meta app' },
               { label: 'Media library (R2 uploads)', state: 'pending', note: 'needs your R2 keys' },
-              { label: 'Two-step login for admins', state: 'next' },
-              { label: 'Real paused publishing', state: 'later', note: 'Phase 3' },
+              { label: 'Two-step login for admins', state: 'done' },
+              { label: 'Real paused publishing', state: 'next' },
             ].map((s) => (
               <li key={s.label} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
                 <span className="text-ink">{s.label}</span>

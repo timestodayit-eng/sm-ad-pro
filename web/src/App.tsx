@@ -11,6 +11,7 @@ import { ComingSoonPage } from './pages/ComingSoon';
 import { DashboardPage } from './pages/Dashboard';
 import { HealthPage } from './pages/Health';
 import { MediaPage } from './pages/Media';
+import { SecurityPage } from './pages/Security';
 import { NotificationsPage } from './pages/Notifications';
 import { SettingsPage } from './pages/Settings';
 
@@ -30,6 +31,8 @@ function Guard({ children }: { children: ReactNode }) {
   if (loading) return <FullScreenLoader />;
   if (bootstrap.setupRequired) return <Navigate to="/setup" replace />;
   if (!me) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  // Admins without two-step login can only set it up; the server enforces the same rule.
+  if (me.mfa?.setupRequired && loc.pathname !== '/security') return <Navigate to="/security" replace />;
   return <Layout>{children}</Layout>;
 }
 
@@ -77,6 +80,7 @@ export function App() {
       {ALL_ITEMS.map((item) => (
         <Route key={item.to} path={item.to} element={<Guard>{BUILT[item.to] ?? <ComingSoonPage item={item} />}</Guard>} />
       ))}
+      <Route path="/security" element={<Guard><SecurityPage /></Guard>} />
       <Route path="*" element={<Guard><NotFound /></Guard>} />
     </Routes>
   );

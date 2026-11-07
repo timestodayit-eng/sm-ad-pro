@@ -187,6 +187,7 @@ function UsersCard() {
       qc.invalidateQueries({ queryKey: ['users'] });
     },
   });
+  const reset2fa = useMutation({ mutationFn: (u: any) => post(`/users/${u.id}/reset-2fa`), onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) });
   const toggleActive = useMutation({ mutationFn: (u: any) => patch(`/users/${u.id}`, { isActive: !u.is_active }), onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) });
   const fields = create.error instanceof ApiError ? create.error.fields : {};
   return (
@@ -255,7 +256,13 @@ function UsersCard() {
               </div>
               <Badge tone={u.role === 'super_admin' ? 'brand' : 'neutral'}>{u.roleLabel}</Badge>
               {!u.is_active && <Badge tone="bad">Deactivated</Badge>}
+              {u.mfa_enabled === 1 || u.mfa_enabled === true ? <Badge tone="good">2-step on</Badge> : u.mfa_enabled != null ? <Badge tone={['super_admin', 'admin'].includes(u.role) ? 'warn' : 'neutral'}>2-step off</Badge> : null}
               <span className="hidden text-xs text-ink-3 md:block">Last sign-in {u.last_login_at ? formatDateTime(u.last_login_at) : 'never'}</span>
+              {u.id !== me?.user.id && Boolean(u.mfa_enabled) && (
+                <Button size="sm" variant="ghost" loading={reset2fa.isPending && reset2fa.variables?.id === u.id} onClick={() => window.confirm(`Reset two-step login for ${u.name}? They will be signed out and must set it up again.`) && reset2fa.mutate(u)}>
+                  Reset 2-step
+                </Button>
+              )}
               {u.id !== me?.user.id && (
                 <Button size="sm" variant="ghost" onClick={() => toggleActive.mutate(u)}>
                   {u.is_active ? 'Deactivate' : 'Reactivate'}

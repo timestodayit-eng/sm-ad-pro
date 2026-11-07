@@ -7,6 +7,16 @@ Target: `https://proads.smenterpriserl1987.com`, Node.js app in hPanel, MySQL 8 
 hPanel → Databases → MySQL Databases. Create a database and a user, and note the three values
 (`u…_proads` style names). Leave the database empty: the app installs its own tables.
 
+### Optional: import the database with phpMyAdmin
+
+The Setup page (step 4) installs the tables for you, so this is not needed. If you prefer phpMyAdmin:
+
+1. hPanel → Databases → phpMyAdmin → open your **new, empty** database.
+2. **Import** → choose `database/fresh-install-v<version>.sql` from the release ZIP → **Go**.
+3. Continue with step 2. The Setup page will skip "Install database" and go straight to creating the Super Admin.
+
+Never import this file into a database that already has the app's tables. For upgrades use [UPGRADE.md](UPGRADE.md).
+
 ## 2. Create the Node.js app
 
 hPanel → Websites → your domain → Node.js (or "Add website → Node.js app").
@@ -14,7 +24,8 @@ hPanel → Websites → your domain → Node.js (or "Add website → Node.js app
 - Node version: **22**
 - Application root: the folder you upload to
 - Startup file: **`server.js`**
-- Build command: `npm ci && npm run build` (or upload a release ZIP that already contains `server/dist` and `web/dist`, then use `npm ci --omit=dev`)
+- Install command: `npm ci --omit=dev` (or leave Hostinger's default)
+- Build command: `npm run build`. With a release ZIP this finishes instantly ("Prebuilt … found"), because the ZIP already contains the compiled app. From Git source it compiles; all build tools are regular dependencies, so it works even when the host skips dev packages.
 
 ## 3. Add the environment variables
 
@@ -44,6 +55,8 @@ Start the app, then open `https://proads.smenterpriserl1987.com`. You land on **
 2. Fill in business name, your name, email and a password of 12+ characters, press **Create Super Admin and sign in**.
 
 Setup refuses to run again once a user exists.
+
+3. You are taken to **Security** to turn on two-step login (required for Super Admins and Admins). Scan the QR code with Google Authenticator, Microsoft Authenticator or Authy, enter the code, and save the 10 recovery codes somewhere safe.
 
 ## 5. Add the cron job
 

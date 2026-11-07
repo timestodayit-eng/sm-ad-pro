@@ -31,4 +31,6 @@ Restore the database backup and redeploy the previous release. Migrations are fo
 
 ## Release notes
 
+- **0.3.0** adds migration `0003_two_factor`. After you apply it, every Super Admin and Admin is taken to **Security** at their next page load and must set up two-step login with an authenticator app before using the panel. Schema upgrades stay reachable without it, so an upgrade can never lock everyone out. Save the recovery codes. If someone loses their phone, another Super Admin can reset it from Settings → Users.
+
 - **0.2.0** adds migration `0002_media` (media library table and a cleanup schedule). After deploying, apply it from Settings → Database. Add the R2 settings from docs/R2_SETUP.md, then run **Check storage connection** on the Media Library page.

@@ -5,7 +5,7 @@ import { createApp } from '../src/app.js';
 import { execute, queryOne } from '../src/db/pool.js';
 import { hashPassword } from '../src/lib/crypto.js';
 import { planParts } from '../src/services/storage.js';
-import { closePool, freshDb, TEST_ORIGIN } from './helpers.js';
+import { closePool, freshDb, signIn, TEST_ORIGIN } from './helpers.js';
 
 /**
  * Runs the real upload pipeline against an S3-compatible server (moto locally, a moto container in CI).
@@ -181,9 +181,8 @@ describe('media library without R2 configured', () => {
     const app = createApp();
     const org = await execute(`INSERT INTO orgs (name) VALUES ('O')`);
     await execute(`INSERT INTO users (org_id, email, name, password_hash, role) VALUES (?,?,?,?, 'admin')`, [org.insertId, 'a@example.test', 'A', await hashPassword('admin password 1234')]);
-    const agent = request.agent(app);
-    const r = await agent.post('/api/auth/login').set('Origin', TEST_ORIGIN).send({ email: 'a@example.test', password: 'admin password 1234' });
-    const up = await agent.post('/api/media/uploads').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', r.body.csrfToken).send({ name: 'x.mp4', size: 10, contentType: 'video/mp4' });
+    const { agent, csrf: c } = await signIn(app, 'a@example.test', 'admin password 1234');
+    const up = await agent.post('/api/media/uploads').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', c).send({ name: 'x.mp4', size: 10, contentType: 'video/mp4' });
     expect(up.status).toBe(503);
     expect(up.body.error.code).toBe('FEATURE_NOT_CONFIGURED');
     expect(up.body.error.hint).toContain('R2_ACCESS_KEY_ID');

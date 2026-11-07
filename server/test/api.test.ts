@@ -3,17 +3,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { execute, queryOne } from '../src/db/pool.js';
 import { hashPassword } from '../src/lib/crypto.js';
-import { closePool, freshDb, TEST_ORIGIN } from './helpers.js';
+import { closePool, freshDb, signIn, TEST_ORIGIN } from './helpers.js';
 
 let app: ReturnType<typeof createApp>;
 const admin = { email: 'admin@example.test', password: 'correct horse battery staple' };
 
 /** A logged-in agent that sends the Origin header and CSRF token like the real frontend. */
 async function login(email: string, password: string) {
-  const agent = request.agent(app);
-  const res = await agent.post('/api/auth/login').set('Origin', TEST_ORIGIN).send({ email, password });
-  expect(res.status).toBe(200);
-  return { agent, csrf: res.body.csrfToken as string };
+  return signIn(app, email, password);
 }
 
 beforeAll(async () => {

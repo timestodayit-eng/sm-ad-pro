@@ -49,3 +49,36 @@ export async function emptyDb() {
 }
 
 export { closePool };
+
+/* ---- two-step login helpers for tests ---- */
+import request from 'supertest';
+import { execute as dbExecute } from '../src/db/pool.js';
+import { currentStep, hotp } from '../src/auth/totp.js';
+
+const secrets = new Map<string, string>();
+
+/**
+ * Signs in like the real frontend, including two-step login. Admin roles are enrolled on first use, because the
+ * server refuses them everything else until they are. Test-only shortcut: the replay guard is reset before
+ * reusing the current code, since tests sign in many times within one 30-second window.
+ */
+export async function signIn(app: any, email: string, password: string) {
+  const agent = request.agent(app);
+  let res = await agent.post('/api/auth/login').set('Origin', TEST_ORIGIN).send({ email, password });
+  if (res.status !== 200) throw new Error(`login failed: ${res.status} ${JSON.stringify(res.body)}`);
+  if (res.body.mfaRequired) {
+    await dbExecute(`UPDATE users SET totp_last_step=NULL WHERE email=?`, [email]);
+    res = await agent.post('/api/auth/login/verify').set('Origin', TEST_ORIGIN).send({ challenge: res.body.challenge, code: hotp(secrets.get(email)!, currentStep()) });
+    if (res.status !== 200) throw new Error(`mfa verify failed: ${JSON.stringify(res.body)}`);
+  }
+  const csrf = res.body.csrfToken as string;
+  const me = await agent.get('/api/auth/me');
+  if (me.body.mfa?.setupRequired) {
+    const s = await agent.post('/api/auth/2fa/setup').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({});
+    const secret = s.body.secret.replace(/\s/g, '');
+    secrets.set(email, secret);
+    const en = await agent.post('/api/auth/2fa/enable').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ code: hotp(secret, currentStep()) });
+    if (en.status !== 200) throw new Error(`mfa enable failed: ${JSON.stringify(en.body)}`);
+  }
+  return { agent, csrf };
+}

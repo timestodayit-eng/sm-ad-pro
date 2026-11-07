@@ -27,6 +27,7 @@ export interface Me {
   permissions: string[];
   csrfToken: string;
   branding: Branding;
+  mfa?: { enabled: boolean | null; required: boolean; setupRequired: boolean };
   features: { meta: boolean; metaLoginForBusiness: boolean; r2: boolean; openai: boolean; publishEnabled: boolean; activationEnabled: boolean };
 }
 

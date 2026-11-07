@@ -22,7 +22,9 @@ adminRouter.post('/admin/schema/migrate', requirePermission('schema.migrate', 'a
     res.json(out);
 }));
 adminRouter.get('/users', requirePermission('users.manage', 'manage users'), asyncHandler(async (req, res) => {
-    const rows = await query(`SELECT id, email, name, role, ai_level, all_accounts, is_active, last_login_at, created_at FROM users WHERE org_id=? ORDER BY created_at`, [req.user.orgId]);
+    const base = `SELECT id, email, name, role, ai_level, all_accounts, is_active, last_login_at, created_at`;
+    // The two-step column exists only after migration 0003; keep this list working during an upgrade.
+    const rows = await query(`${base}, totp_enabled_at IS NOT NULL AS mfa_enabled FROM users WHERE org_id=? ORDER BY created_at`, [req.user.orgId]).catch((err) => err?.code === 'ER_BAD_FIELD_ERROR' ? query(`${base}, NULL AS mfa_enabled FROM users WHERE org_id=? ORDER BY created_at`, [req.user.orgId]) : Promise.reject(err));
     res.json({ users: rows.map((r) => ({ ...r, roleLabel: ROLE_LABELS[r.role] ?? r.role })), roles: ROLES.map((r) => ({ id: r, label: ROLE_LABELS[r] })) });
 }));
 const userInput = z.object({

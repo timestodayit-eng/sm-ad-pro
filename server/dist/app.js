@@ -9,12 +9,13 @@ import { db } from './db/pool.js';
 import { schemaStatus } from './db/migrations.js';
 import { correlation, errorHandler } from './lib/http.js';
 import { AppError } from './lib/errors.js';
-import { loadSession, originAndCsrf, requireAuth } from './auth/sessions.js';
+import { loadSession, originAndCsrf, requireAuth, requireMfaSetup } from './auth/sessions.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { internalRouter, opsRouter } from './routes/ops.js';
 import { metaCallbackRouter, metaRouter } from './routes/meta.js';
 import { mediaRouter } from './routes/media.js';
+import { securityRouter } from './routes/security.js';
 function webDist() {
     const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [join(here, '..', '..', 'web', 'dist'), join(here, '..', 'web', 'dist')];
@@ -63,7 +64,9 @@ export function createApp() {
     api.use(metaCallbackRouter); // GET only, before CSRF/origin
     api.use(originAndCsrf);
     api.use(authRouter);
+    api.use(securityRouter);
     api.use(requireAuth);
+    api.use(requireMfaSetup);
     api.use(adminRouter);
     api.use(opsRouter);
     api.use(metaRouter);

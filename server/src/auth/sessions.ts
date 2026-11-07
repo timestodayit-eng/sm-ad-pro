@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { env } from '../config/env.js';
 import { execute, queryOne } from '../db/pool.js';
 import { hmac, randomToken, safeEqual } from '../lib/crypto.js';
-import { errors } from '../lib/errors.js';
+import { AppError, errors } from '../lib/errors.js';
 import { can, type Permission } from './rbac.js';
 
 export const SESSION_COOKIE = 'acc_sid';
@@ -15,7 +15,12 @@ export interface SessionUser {
   role: string;
   aiLevel: number;
   allAccounts: boolean;
+  /** null while the two-step login migration has not been applied yet (never block an upgrade). */
+  mfaEnabled: boolean | null;
 }
+
+/** Roles that must use two-step login. */
+export const MFA_REQUIRED_ROLES = ['super_admin', 'admin'];
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -77,6 +82,10 @@ export async function loadSession(req: Request, _res: Response, next: NextFuncti
         role: row.role,
         aiLevel: Number(row.ai_level),
         allAccounts: Boolean(row.all_accounts),
+        mfaEnabled: await queryOne(`SELECT totp_enabled_at FROM users WHERE id=?`, [row.id]).then(
+          (r) => Boolean(r?.totp_enabled_at),
+          () => null,
+        ),
       };
       req.sessionId = row.sid;
       req.csrfToken = row.csrf_token;
@@ -92,6 +101,27 @@ export async function loadSession(req: Request, _res: Response, next: NextFuncti
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   if (!req.user) return next(errors.unauthenticated());
+  next();
+}
+
+/**
+ * Admins without two-step login can only reach the endpoints needed to set it up (and to apply schema upgrades,
+ * so an upgrade can never lock everyone out).
+ */
+const MFA_SETUP_ALLOWED = [/^\/auth\//, /^\/admin\/schema/, /^\/public\//];
+export function requireMfaSetup(req: Request, _res: Response, next: NextFunction) {
+  const u = req.user;
+  if (u && u.mfaEnabled === false && MFA_REQUIRED_ROLES.includes(u.role) && !MFA_SETUP_ALLOWED.some((r) => r.test(req.path))) {
+    return next(
+      new AppError({
+        code: 'MFA_SETUP_REQUIRED',
+        message: 'Set up two-step login before using the panel.',
+        status: 403,
+        category: 'auth',
+        hint: 'Open Settings → Security and scan the QR code with an authenticator app.',
+      }),
+    );
+  }
   next();
 }
 

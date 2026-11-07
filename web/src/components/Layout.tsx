@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Bell, ChevronDown, Languages, LogOut, Menu, Monitor, Moon, Sun, X } from 'lucide-react';
+import { AlertTriangle, Bell, ChevronDown, Languages, LogOut, Menu, Monitor, Moon, ShieldCheck, Sun, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { get } from '../lib/api';
@@ -138,6 +138,10 @@ function UserMenu() {
       {open && (
         <div className="animate-in absolute right-0 z-50 mt-2 w-56 rounded-xl border border-line bg-surface p-1 shadow-pop" role="menu">
           <div className="px-3 py-2 text-xs text-ink-3">{me.user.email}</div>
+          <Link to="/security" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-2 hover:bg-surface-2" role="menuitem">
+            <ShieldCheck className="size-4" /> Security
+            {me.mfa?.enabled === false && <span className="ml-auto rounded-full bg-warn-bg px-1.5 text-[10px] font-medium text-warn">Off</span>}
+          </Link>
           <button onClick={signOut} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-ink-2 hover:bg-surface-2" role="menuitem">
             <LogOut className="size-4" /> {t('signOut')}
           </button>
