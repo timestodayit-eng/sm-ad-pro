@@ -76,7 +76,7 @@ function LaunchDetail({ id }: { id: number }) {
                 <td className="px-2 py-3 text-xs text-ink-3 tabular-nums">
                   {i.campaignId ? <div>Campaign {i.campaignId}</div> : null}
                   {i.adsetId ? <div>Ad set {i.adsetId}</div> : null}
-                  {i.adId ? <div>Ad {i.adId}</div> : null}
+                  {i.ads && i.ads.length > 1 ? i.ads.filter((a: any) => a.adId).map((a: any) => <div key={a.position}>Ad {a.position}: {a.adId}</div>) : i.adId ? <div>Ad {i.adId}</div> : null}
                   {!i.campaignId && !i.videoId ? '—' : null}
                   {i.videoId && !i.campaignId ? <div>Video {i.videoId}</div> : null}
                 </td>

@@ -47,11 +47,12 @@ export const OBJECTIVES: Record<string, { label: string; call: Record<string, Op
   },
   OUTCOME_ENGAGEMENT: {
     label: 'Engagement',
-    call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } },
+    call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } },
     website: { LINK_CLICKS: { label: 'Link clicks', destination_type: 'WEBSITE' }, THRUPLAY: { label: 'Video views (ThruPlay)', destination_type: 'ON_VIDEO', promotedPage: true }, POST_ENGAGEMENT: { label: 'Post engagement', destination_type: 'ON_POST', promotedPage: true } },
   },
-  OUTCOME_LEADS: { label: 'Leads', call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Leads on a website need a Meta pixel and an event; instant forms need a form. The panel supports Leads with Calls.' },
-  OUTCOME_SALES: { label: 'Sales', call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Sales on a website need a pixel or catalogue. The panel supports Sales with Calls.' },
+  // Ads Manager: Leads → conversion location "Calls", performance goal "Maximize number of calls", with the Facebook Page.
+  OUTCOME_LEADS: { label: 'Leads', call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Leads runs as Calls: conversion location Calls, performance goal "Maximize number of calls", with your Facebook Page. Choose the Call goal below.' },
+  OUTCOME_SALES: { label: 'Sales', call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Sales runs as Calls here: conversion location Calls, performance goal "Maximize number of calls". Choose the Call goal below.' },
   OUTCOME_APP_PROMOTION: { label: 'App promotion', call: null, website: null, note: 'Needs an app registered with Meta. Not supported by the panel.' },
 };
 /** Older launches saved goal + optimize only; these are the objectives and names they meant. */
@@ -142,6 +143,14 @@ export const advancedInput = z.object({
 });
 export type AdvancedInput = z.infer<typeof advancedInput>;
 
+/** One more ad in the same ad set: its own video, and optionally its own caption and headline. */
+export const extraAdInput = z.object({
+  mediaAssetId: z.number().int().positive().optional(),
+  caption: text(2000).optional(),
+  title: text(255).optional(),
+});
+export const MAX_ADS = 10;
+
 export const launchInput = z.object({
   name: text(120).min(1, 'Give the launch a name.'),
   goal: z.enum(['call', 'website']),
@@ -156,6 +165,8 @@ export const launchInput = z.object({
   mediaAssetId: z.number().int().positive().optional(),
   caption: text(2000).default(''),
   title: text(255).default(''),
+  /** Ads 2..N in every account's ad set (ad 1 is the video, caption and title above). Same across accounts. */
+  moreAds: z.array(extraAdInput).max(MAX_ADS - 1, `At most ${MAX_ADS} ads in one campaign.`).default([]),
   link: text(1024).default(''),
   cta: z.string().default('LEARN_MORE'),
   countries: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1, 'Choose at least one country.').max(25),
@@ -235,7 +246,7 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
   const ids = input.rows.map((r) => r.accountRowId);
   const defaults = ids.length ? await query<any>(`SELECT * FROM account_defaults WHERE ad_account_row_id IN (?)`, [ids]) : [];
   const pages = await pagesFor(user.orgId);
-  const mediaIds = [...new Set([input.mediaAssetId, ...input.rows.map((r) => r.mediaAssetId)].filter(Boolean))] as number[];
+  const mediaIds = [...new Set([input.mediaAssetId, ...input.moreAds.map((x) => x.mediaAssetId), ...input.rows.map((r) => r.mediaAssetId)].filter(Boolean))] as number[];
   const media = mediaIds.length
     ? await query<any>(`SELECT id, original_name, kind, status FROM media_assets WHERE org_id=? AND id IN (?)`, [user.orgId, mediaIds])
     : [];
@@ -247,6 +258,19 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
   const unknown = input.rows.filter((r) => !byId.has(r.accountRowId));
   if (unknown.length) problems.push(`${unknown.length} account(s) are not working accounts any more. Refresh the page.`);
   const seen = new Set<number>();
+  const videoIssue = (mediaId: number | null, m: any, what: string) => {
+    if (!mediaId) return `Choose a video${what}.`;
+    if (!m || m.kind !== 'video') return `The video${what} was not found in the media library.`;
+    if (m.status !== 'ready') return `The video${what} has not finished uploading.`;
+    return null;
+  };
+  // Ads 2..N are the same in every account, so their problems are launch problems, not row issues.
+  const moreAds = input.moreAds.map((x, i) => {
+    const m = media.find((y) => Number(y.id) === x.mediaAssetId);
+    const issue = videoIssue(x.mediaAssetId ?? null, m, ` for ad ${i + 2}`);
+    if (issue) problems.push(issue);
+    return { mediaAssetId: x.mediaAssetId ?? null, videoName: m?.original_name ?? null, caption: x.caption || input.caption, title: x.title || input.title };
+  });
 
   const rows = ordered.map((r, i) => {
     const a = byId.get(r.accountRowId);
@@ -272,9 +296,8 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
 
     const mediaId = r.mediaAssetId ?? input.mediaAssetId ?? null;
     const m = media.find((x) => Number(x.id) === mediaId);
-    if (!mediaId) issues.push('Choose a video.');
-    else if (!m || m.kind !== 'video') issues.push('The video was not found in the media library.');
-    else if (m.status !== 'ready') issues.push('The video has not finished uploading.');
+    const videoProblem = videoIssue(mediaId, m, '');
+    if (videoProblem) issues.push(videoProblem);
 
     const employment = input.specialCategory === 'EMPLOYMENT';
     const ageMin = employment ? 18 : (r.ageMin ?? input.ageMin);
@@ -297,6 +320,8 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
       pageId, pageName: page?.name ?? null, budget, budgetKind: input.budget.kind, dailyBudget: budget,
       mediaAssetId: mediaId, videoName: m?.original_name ?? null,
       caption, title, link, ageMin, ageMax, issues,
+      // every ad in this account's ad set, in order; ad 1 is the row's own video and text
+      ads: [{ mediaAssetId: mediaId, videoName: m?.original_name ?? null, caption, title }, ...moreAds],
     };
   });
 
@@ -307,6 +332,7 @@ export async function planLaunch(user: Express.Request['user'] & {}, input: Laun
     goal: goal ? { ...goal, goal: input.goal, optimize: goal.optimization_goal } : null,
     ready: problems.length === 0 && rows.length > 0 && rows.every((r) => r.issues.length === 0),
     budgetKind: input.budget.kind,
+    adsPerAccount: 1 + moreAds.length,
     days: input.startDate && input.endDate ? Math.round((Date.parse(input.endDate) - Date.parse(input.startDate)) / 86_400_000) : null,
     totals: currencies.map((c) => ({ currency: c, total: round2(rows.filter((r) => r.currency === c).reduce((n, r) => n + (r.budget ?? 0), 0)) })),
   };
@@ -353,6 +379,8 @@ export async function createLaunch(user: Express.Request['user'] & {}, input: La
        ON DUPLICATE KEY UPDATE page_id=VALUES(page_id), ${isCall ? 'phone_number=VALUES(phone_number)' : 'website_url=VALUES(website_url)'}`,
       [r.accountRowId, r.pageId, r.link],
     );
+    for (const [i, ad] of r.ads.entries())
+      await execute(`INSERT INTO launch_item_ads (launch_item_id, position, media_asset_id, caption, title) VALUES (?,?,?,?,?)`, [item.insertId, i + 1, ad.mediaAssetId, ad.caption, ad.title || null]);
     const jobId = await enqueue({ queue: 'publishing', type: 'launch.item', payload: { itemId: item.insertId }, priority: 20 + r.position, maxAttempts: 5, dedupeKey: `launch-item:${item.insertId}:1` });
     await execute(`UPDATE launch_items SET job_id=? WHERE id=?`, [jobId, item.insertId]);
   }
@@ -592,36 +620,38 @@ export function metaPayloads(launch: { id: number; name: string; settings: any }
     ...(reachesEu ? { dsa_beneficiary: s.paidBy, dsa_payor: s.paidBy } : {}),
   };
   const isCall = s.goal === 'call';
-  const creative = (videoId: string, imageUrl: string | null, featuresOff: string[] | null = CREATIVE_FEATURES_OFF) => ({
-    name: `${launch.name} ${tag}`,
+  /** Ad names: the single-ad name stays as before; with several ads each carries its number. */
+  const adName = (n: number, count: number) => (count > 1 ? `${launch.name} · Ad ${n} ${tag}` : `${launch.name} ${tag}`);
+  const creative = (ad: { videoId: string; imageUrl: string | null; caption?: string | null; title?: string | null; n?: number; count?: number }, featuresOff: string[] | null = CREATIVE_FEATURES_OFF) => ({
+    name: adName(ad.n ?? 1, ad.count ?? 1),
     ...(adv?.urlTags && !isCall ? { url_tags: adv.urlTags } : {}),
     // Every Advantage+ creative feature off: Meta shows the video, caption and headline exactly as given.
     ...(featuresOff ? { degrees_of_freedom_spec: { creative_features_spec: Object.fromEntries(featuresOff.map((f) => [f, { enroll_status: 'OPT_OUT' }])) } } : {}),
     object_story_spec: {
       page_id: item.page_id,
       video_data: {
-        video_id: videoId,
-        ...(imageUrl ? { image_url: imageUrl } : {}),
-        message: content.caption,
-        ...(content.title ? { title: content.title } : {}),
+        video_id: ad.videoId,
+        ...(ad.imageUrl ? { image_url: ad.imageUrl } : {}),
+        message: ad.caption || content.caption,
+        ...((ad.title || content.title) ? { title: ad.title || content.title } : {}),
         ...(adv?.description ? { link_description: adv.description } : {}),
         call_to_action: isCall ? { type: 'CALL_NOW', value: { link: `tel:${content.link}` } } : { type: s.cta, value: { link: content.link } },
       },
     },
   });
-  const ad = { name: `${launch.name} ${tag}`, status: 'PAUSED' };
-  return { campaign, adset, creative, ad, tag };
+  const ad = (n = 1, count = 1) => ({ name: adName(n, count), status: 'PAUSED' });
+  return { campaign, adset, creative, ad, adName, tag };
 }
 
 const STEP_BUDGET_MS = 40_000;
 const PROCESSING_TIMEOUT_MS = 60 * 60_000;
 
 export const STAGE_LABEL: Record<string, string> = {
-  video: 'Uploading the video',
-  processing: 'Meta is processing the video',
+  video: 'Uploading the video(s)',
+  processing: 'Meta is processing the video(s)',
   campaign: 'Creating the campaign',
   adset: 'Creating the ad set',
-  creative: 'Creating the ad creative',
+  creative: 'Creating the ad creative(s)',
   ad: 'Creating the ad',
   check: 'Checking the ad on Meta',
   done: 'Done',
@@ -637,6 +667,20 @@ function jobErrorFrom(err: unknown) {
   return new JobError({ kind: 'transient', code: 'UNEXPECTED_ERROR', message: String((err as any)?.message ?? err).slice(0, 900) });
 }
 
+/** The ads of one launch item, oldest launches included: an item without rows gets its single ad from its own columns. */
+async function adsOf(item: any) {
+  let ads = await query<any>(`SELECT * FROM launch_item_ads WHERE launch_item_id=? ORDER BY position`, [item.id]);
+  if (ads.length === 0) {
+    const content = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
+    await execute(
+      `INSERT INTO launch_item_ads (launch_item_id, position, media_asset_id, caption, title, video_id, thumbnail_url, creative_id, ad_id, ad_status) VALUES (?,1,?,?,?,?,?,?,?,?)`,
+      [item.id, item.media_asset_id, content?.caption ?? null, content?.title ?? null, item.video_id, item.thumbnail_url, item.creative_id, item.ad_id, item.ad_status],
+    );
+    ads = await query<any>(`SELECT * FROM launch_item_ads WHERE launch_item_id=? ORDER BY position`, [item.id]);
+  }
+  return ads;
+}
+
 export async function runLaunchItem(job: Job, ctx: JobContext) {
   const itemId = Number(job.payload?.itemId);
   const item = await queryOne<any>(`SELECT * FROM launch_items WHERE id=?`, [itemId]);
@@ -650,6 +694,8 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
   const token = decryptConnectionToken(account);
   const act = `act_${account.account_id}`;
   const p = metaPayloads(launch, item, account);
+  const ads = await adsOf(item);
+  const count = ads.length;
   // On a retry, look for objects an earlier attempt may have created before asking Meta to create new ones.
   const retrying = job.attempts > 1;
   let lastRefusal = '';
@@ -659,25 +705,43 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
     Object.assign(item, fields);
     return execute(`UPDATE launch_items SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map((k) => fields[k]), itemId]);
   };
+  // Per-ad progress. Ad 1 is mirrored onto the item's own columns, which older screens and reports read.
+  const saveAd = async (ad: any, fields: Record<string, unknown>) => {
+    const keys = Object.keys(fields);
+    Object.assign(ad, fields);
+    await execute(`UPDATE launch_item_ads SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map((k) => fields[k]), ad.id]);
+    if (ad.position === 1) {
+      const mirror = Object.fromEntries(keys.filter((k) => ['video_id', 'thumbnail_url', 'creative_id', 'ad_id', 'ad_status'].includes(k)).map((k) => [k, fields[k]]));
+      if (Object.keys(mirror).length) await save(mirror);
+    }
+  };
   await save({ status: 'working', error_code: null, error_message: null, error_hint: null, started_at: item.started_at ?? new Date() });
 
   const findByName = async (path: string, name: string) => {
     const { data } = await graph<any>({ path, params: { fields: 'id,name', limit: 200, filtering: [{ field: 'name', operator: 'CONTAIN', value: p.tag }] }, accessToken: token, operation: 'meta.launch.find' });
     return (data.data ?? []).find((x: any) => x.name === name)?.id as string | undefined;
   };
+  const outOfTime = () => Date.now() - started > STEP_BUDGET_MS;
 
   try {
     while (item.stage !== 'done') {
-      if (Date.now() - started > STEP_BUDGET_MS) return ctx.rescheduleIn(1);
+      if (outOfTime()) return ctx.rescheduleIn(1);
       switch (item.stage) {
         case 'video': {
-          const cached = await queryOne<any>(`SELECT video_id FROM meta_video_uploads WHERE ad_account_row_id=? AND media_asset_id=?`, [item.ad_account_row_id, item.media_asset_id]);
-          if (cached) {
-            await save({ video_id: cached.video_id, stage: 'processing' });
+          // Every video of this item goes to the account's library once; a video used twice is uploaded once.
+          const pending = ads.find((a) => !a.video_id);
+          if (!pending) {
+            await save({ stage: 'processing' });
             break;
           }
-          const m = await queryOne<any>(`SELECT object_key, original_name, status FROM media_assets WHERE id=?`, [item.media_asset_id]);
-          if (!m || m.status !== 'ready') throw new JobError({ kind: 'deterministic', code: 'VIDEO_MISSING', message: 'The video is no longer in the media library.' });
+          const twin = ads.find((a) => a.video_id && Number(a.media_asset_id) === Number(pending.media_asset_id));
+          const cached = twin ? { video_id: twin.video_id } : await queryOne<any>(`SELECT video_id FROM meta_video_uploads WHERE ad_account_row_id=? AND media_asset_id=?`, [item.ad_account_row_id, pending.media_asset_id]);
+          if (cached) {
+            await saveAd(pending, { video_id: cached.video_id, thumbnail_url: twin?.thumbnail_url ?? null });
+            break;
+          }
+          const m = await queryOne<any>(`SELECT object_key, original_name, status FROM media_assets WHERE id=?`, [pending.media_asset_id]);
+          if (!m || m.status !== 'ready') throw new JobError({ kind: 'deterministic', code: 'VIDEO_MISSING', message: count > 1 ? `The video of ad ${pending.position} is no longer in the media library.` : 'The video is no longer in the media library.' });
           const fileUrl = await presignGet(m.object_key, { expiresIn: 6 * 3600 });
           let videoId: string;
           try {
@@ -687,27 +751,38 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
             if (err instanceof MetaApiError && err.meta.class === 'ambiguous') throw new JobError({ kind: 'transient', code: 'VIDEO_UPLOAD_UNCLEAR', message: 'Meta did not answer the video upload. Trying again.' });
             throw err;
           }
-          await execute(`INSERT INTO meta_video_uploads (ad_account_row_id, media_asset_id, video_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE video_id=VALUES(video_id)`, [item.ad_account_row_id, item.media_asset_id, videoId]);
-          await save({ video_id: videoId, stage: 'processing' });
+          await execute(`INSERT INTO meta_video_uploads (ad_account_row_id, media_asset_id, video_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE video_id=VALUES(video_id)`, [item.ad_account_row_id, pending.media_asset_id, videoId]);
+          await saveAd(pending, { video_id: videoId });
           break;
         }
         case 'processing': {
-          const { data: v } = await graph<any>({ path: item.video_id, params: { fields: 'status' }, accessToken: token, operation: 'meta.launch.video_status' });
-          const st = v.status?.video_status;
-          if (st === 'error') {
-            await execute(`DELETE FROM meta_video_uploads WHERE ad_account_row_id=? AND media_asset_id=?`, [item.ad_account_row_id, item.media_asset_id]);
-            await save({ stage: 'video', video_id: null });
-            throw new JobError({ kind: 'deterministic', code: 'VIDEO_PROCESSING_FAILED', message: v.status?.processing_progress != null ? 'Meta could not process the video.' : 'Meta rejected the video file.', hint: 'Check the video format (MP4 or MOV) and try again.' });
+          // Each video must be ready at Meta before a creative can use it; the first one still processing holds the item.
+          let waiting = false;
+          for (const ad of ads) {
+            if (ad.thumbnail_url) continue;
+            const { data: v } = await graph<any>({ path: ad.video_id, params: { fields: 'status' }, accessToken: token, operation: 'meta.launch.video_status' });
+            const st = v.status?.video_status;
+            if (st === 'error') {
+              await execute(`DELETE FROM meta_video_uploads WHERE ad_account_row_id=? AND media_asset_id=?`, [item.ad_account_row_id, ad.media_asset_id]);
+              for (const a of ads) if (a.video_id === ad.video_id) await saveAd(a, { video_id: null, thumbnail_url: null });
+              await save({ stage: 'video' });
+              const which = count > 1 ? ` of ad ${ad.position}` : '';
+              throw new JobError({ kind: 'deterministic', code: 'VIDEO_PROCESSING_FAILED', message: v.status?.processing_progress != null ? `Meta could not process the video${which}.` : `Meta rejected the video file${which}.`, hint: 'Check the video format (MP4 or MOV) and try again.' });
+            }
+            if (st !== 'ready') {
+              if (Date.now() - new Date(item.started_at).getTime() > PROCESSING_TIMEOUT_MS)
+                throw new JobError({ kind: 'deterministic', code: 'VIDEO_PROCESSING_TIMEOUT', message: 'Meta has been processing the video for over an hour.', hint: 'Press Retry later to check again.' });
+              waiting = true;
+              break;
+            }
+            const { data: th } = await graph<any>({ path: `${ad.video_id}/thumbnails`, params: { fields: 'uri,is_preferred' }, accessToken: token, operation: 'meta.launch.thumbnail' });
+            const list: any[] = th.data ?? [];
+            const thumb = list.find((t) => t.is_preferred) ?? list[0];
+            await saveAd(ad, { thumbnail_url: thumb?.uri ?? '' });
+            if (outOfTime()) return ctx.rescheduleIn(1);
           }
-          if (st !== 'ready') {
-            if (Date.now() - new Date(item.started_at).getTime() > PROCESSING_TIMEOUT_MS)
-              throw new JobError({ kind: 'deterministic', code: 'VIDEO_PROCESSING_TIMEOUT', message: 'Meta has been processing the video for over an hour.', hint: 'Press Retry later to check again.' });
-            return ctx.rescheduleIn(20);
-          }
-          const { data: th } = await graph<any>({ path: `${item.video_id}/thumbnails`, params: { fields: 'uri,is_preferred' }, accessToken: token, operation: 'meta.launch.thumbnail' });
-          const list: any[] = th.data ?? [];
-          const thumb = list.find((t) => t.is_preferred) ?? list[0];
-          await save({ thumbnail_url: thumb?.uri ?? null, stage: 'campaign' });
+          if (waiting) return ctx.rescheduleIn(20);
+          await save({ stage: 'campaign' });
           break;
         }
         case 'campaign': {
@@ -723,15 +798,21 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
           break;
         }
         case 'creative': {
+          const ad = ads.find((a) => !a.creative_id);
+          if (!ad) {
+            await save({ stage: 'ad' });
+            break;
+          }
           // An unused creative is invisible, so a retry may safely create a new one. Meta rejects the whole creative
           // when it does not accept one of the "Advantage+ off" switches, so fall back step by step and say so.
           let creativeId: string | undefined;
           let note: string | null = null;
           const fallbacks = launch.settings?.advanced?.creativeEnhancements ? [null] : CREATIVE_FEATURE_FALLBACKS;
+          const spec = { videoId: ad.video_id, imageUrl: ad.thumbnail_url || null, caption: ad.caption, title: ad.title, n: ad.position, count };
           for (let i = 0; i < fallbacks.length && !creativeId; i++) {
             const featuresOff = fallbacks[i];
             try {
-              ({ data: { id: creativeId } } = await graph<any>({ method: 'POST', path: `${act}/adcreatives`, params: p.creative(item.video_id, item.thumbnail_url, featuresOff), accessToken: token, operation: 'meta.launch.creative' }));
+              ({ data: { id: creativeId } } = await graph<any>({ method: 'POST', path: `${act}/adcreatives`, params: p.creative(spec, featuresOff), accessToken: token, operation: 'meta.launch.creative' }));
               if (i === 1) note = 'Meta accepted only the main "Advantage+ creative off" switch. Check the ad in Ads Manager and turn off any remaining enhancements by hand.';
               if (i === 2) note = `Meta refused the "Advantage+ creative off" switches (${lastRefusal}). The ad was created without them: turn off enhancements by hand in Ads Manager.`;
             } catch (err) {
@@ -741,19 +822,32 @@ export async function runLaunchItem(job: Job, ctx: JobContext) {
               lastRefusal = String(err.message).slice(0, 300);
             }
           }
-          const content = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
-          await save({ creative_id: creativeId, stage: 'ad', ...(note ? { content: JSON.stringify({ ...content, warning: note }) } : {}) });
+          await saveAd(ad, { creative_id: creativeId, ...(note ? { warning: note.slice(0, 500) } : {}) });
+          if (note) {
+            const content = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
+            await save({ content: JSON.stringify({ ...content, warning: count > 1 ? `Ad ${ad.position}: ${note}` : note }) });
+          }
           break;
         }
         case 'ad': {
-          let id = retrying ? await findByName(`${item.adset_id}/ads`, p.ad.name) : undefined;
-          if (!id) ({ data: { id } } = await graph<any>({ method: 'POST', path: `${act}/ads`, params: { ...p.ad, adset_id: item.adset_id, creative: { creative_id: item.creative_id } }, accessToken: token, operation: 'meta.launch.ad' }));
-          await save({ ad_id: id, stage: 'check' });
+          const ad = ads.find((a) => !a.ad_id);
+          if (!ad) {
+            await save({ stage: 'check' });
+            break;
+          }
+          const name = p.adName(ad.position, count);
+          let id = retrying ? await findByName(`${item.adset_id}/ads`, name) : undefined;
+          if (!id) ({ data: { id } } = await graph<any>({ method: 'POST', path: `${act}/ads`, params: { ...p.ad(ad.position, count), adset_id: item.adset_id, creative: { creative_id: ad.creative_id } }, accessToken: token, operation: 'meta.launch.ad' }));
+          await saveAd(ad, { ad_id: id });
           break;
         }
         case 'check': {
-          const { data } = await graph<any>({ path: item.ad_id, params: { fields: 'id,status,effective_status' }, accessToken: token, operation: 'meta.launch.check' });
-          await save({ ad_status: data.effective_status ?? data.status ?? null, stage: 'done', status: 'done', finished_at: new Date() });
+          for (const ad of ads) {
+            if (ad.ad_status) continue;
+            const { data } = await graph<any>({ path: ad.ad_id, params: { fields: 'id,status,effective_status' }, accessToken: token, operation: 'meta.launch.check' });
+            await saveAd(ad, { ad_status: data.effective_status ?? data.status ?? 'UNKNOWN' });
+          }
+          await save({ stage: 'done', status: 'done', finished_at: new Date() });
           break;
         }
         default:

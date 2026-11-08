@@ -307,7 +307,9 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
     expect(setup.objectives.find((o: any) => o.value === 'OUTCOME_LEADS').website).toBeNull();
     expect(setup.buyingTypes.map((b: any) => [b.value, b.supported])).toEqual([['AUCTION', true], ['RESERVED', false]]);
     // what Meta cannot do with the panel's inputs is said up front
-    expect((await plan({ ...base(), pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_LEADS', optimize: 'LINK_CLICKS' })).problems).toContain('Leads on a website need a Meta pixel and an event; instant forms need a form. The panel supports Leads with Calls.');
+    expect((await plan({ ...base(), pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_LEADS', optimize: 'LINK_CLICKS' })).problems).toContain('Leads runs as Calls: conversion location Calls, performance goal "Maximize number of calls", with your Facebook Page. Choose the Call goal below.');
+    // Leads + Call builds exactly the Ads Manager ad set: conversion location Calls, "Maximize number of calls", the Page promoted
+    expect((await plan({ ...base(), pageId: '501', objective: 'OUTCOME_LEADS', optimize: 'QUALITY_CALL' })).goal).toMatchObject({ objective: 'OUTCOME_LEADS', optimization_goal: 'QUALITY_CALL', destination_type: 'PHONE_CALL', promotedPage: true, label: 'Maximize number of calls' });
     expect((await plan({ ...base(), pageId: '501', buyingType: 'RESERVED' })).problems).toContain('Only the Auction buying type is supported. Reserved buying needs a reach and frequency prediction.');
     expect((await plan({ ...base(), pageId: '501', spendCap: 50 })).problems).toContain('Meta requires a campaign spending limit of at least 100 in the account currency.');
     // the default is unchanged: Calls under Engagement
@@ -342,5 +344,43 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
     expect(creativeSpecs).toEqual([14, 1]); // all switches refused, the umbrella switch accepted
     expect(l.items[0]).toMatchObject({ status: 'done', adStatus: 'PAUSED' });
     expect(l.items[0].warning).toMatch(/accepted only the main/);
+  });
+  it('several videos make several ads in the one ad set of every account, each with its own text when given', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const org = (await queryOne<any>(`SELECT org_id FROM media_assets WHERE id=?`, [video])).org_id;
+    const clip2 = (await execute(`INSERT INTO media_assets (org_id, kind, original_name, content_type, size_bytes, object_key, status, part_size, part_count) VALUES (?, 'video', 'clip2.mp4', 'video/mp4', 1000, 'coastal-media/clip2.mp4', 'ready', 1000, 1)`, [org])).insertId;
+    const uploading = (await execute(`INSERT INTO media_assets (org_id, kind, original_name, content_type, size_bytes, object_key, status, part_size, part_count) VALUES (?, 'video', 'half.mp4', 'video/mp4', 1000, 'coastal-media/half.mp4', 'uploading', 1000, 1)`, [org])).insertId;
+    const rows = [{ accountRowId: acc['DE 154'] }];
+    // problems are named per ad, before anything is created
+    let plan = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...base(), name: 'Multi', pageId: '501', rows, moreAds: [{}, { mediaAssetId: uploading }] })).body;
+    expect(plan.problems).toEqual(['Choose a video for ad 2.', 'The video for ad 3 has not finished uploading.']);
+    expect(plan.ready).toBe(false);
+
+    calls.length = 0;
+    const body = { ...base(), name: 'Multi', pageId: '501', rows, moreAds: [{ mediaAssetId: clip2, caption: 'Second clip', title: 'Other headline' }, { mediaAssetId: video }] };
+    plan = (await agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(body)).body;
+    expect(plan.ready).toBe(true);
+    expect(plan.adsPerAccount).toBe(3);
+    expect(plan.rows[0].ads.map((a: any) => [a.videoName, a.caption, a.title])).toEqual([['promo.mp4', 'Call us today', 'Fast delivery'], ['clip2.mp4', 'Second clip', 'Other headline'], ['promo.mp4', 'Call us today', 'Fast delivery']]);
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, confirm: true });
+    expect(res.status).toBe(201);
+    await drain();
+
+    const l = (await agent.get(`/api/launches/${res.body.id}`)).body;
+    expect(l.items[0]).toMatchObject({ status: 'done', adStatus: 'PAUSED' });
+    expect(l.items[0].ads.map((a: any) => [a.position, a.adStatus, !!a.videoId, !!a.creativeId, !!a.adId])).toEqual([[1, 'PAUSED', true, true, true], [2, 'PAUSED', true, true, true], [3, 'PAUSED', true, true, true]]);
+    expect(new Set(l.items[0].ads.map((a: any) => a.adId)).size).toBe(3);
+    expect(l.items[0].ads[0].videoId).toBe(l.items[0].ads[2].videoId); // same video twice: uploaded once
+    expect(l.items[0].adId).toBe(l.items[0].ads[0].adId);
+    const posts = calls.filter((c) => c.method === 'POST');
+    // promo.mp4 was already in this account from an earlier launch; only clip2 is uploaded
+    expect(posts.filter((c) => c.path === 'act_154/advideos').length).toBe(1);
+    expect(posts.filter((c) => c.path === 'act_154/campaigns').length).toBe(1);
+    expect(posts.filter((c) => c.path === 'act_154/adsets').length).toBe(1);
+    const creatives = posts.filter((c) => c.path === 'act_154/adcreatives').map((c) => JSON.parse(c.params.object_story_spec).video_data);
+    expect(creatives.map((v) => [v.message, v.title])).toEqual([['Call us today', 'Fast delivery'], ['Second clip', 'Other headline'], ['Call us today', 'Fast delivery']]);
+    const ads = posts.filter((c) => c.path === 'act_154/ads');
+    expect(ads.map((c) => c.params.name)).toEqual([`Multi · Ad 1 [L${res.body.id}-1]`, `Multi · Ad 2 [L${res.body.id}-1]`, `Multi · Ad 3 [L${res.body.id}-1]`]);
+    expect(ads.every((c) => c.params.status === 'PAUSED' && c.params.adset_id === l.items[0].adsetId)).toBe(true);
   });
 });

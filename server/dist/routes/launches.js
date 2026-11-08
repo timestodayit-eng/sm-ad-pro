@@ -84,8 +84,9 @@ launchesRouter.post('/launches', requirePermission('campaigns.publish', 'create 
     await audit({ orgId: user.orgId, actorUserId: user.id, action: 'launch.created', targetType: 'launch', targetId: String(launchId), details: { accounts: plan.rows.length, goal: input.goal, totals: plan.totals }, ip: req.ip });
     res.status(201).json({ id: launchId });
 }));
-function publicItem(r) {
+function publicItem(r, ads = []) {
     return {
+        ads: ads.map((a) => ({ position: a.position, videoId: a.video_id, creativeId: a.creative_id, adId: a.ad_id, adStatus: a.ad_status, warning: a.warning })),
         id: Number(r.id), position: r.position, accountRowId: Number(r.ad_account_row_id), accountName: r.account_name, accountId: r.account_id,
         pageId: r.page_id, currency: r.currency, budget: minorToMajor(r.budget_minor, r.currency), budgetKind: r.budget_kind,
         status: r.status, stage: r.stage, stageLabel: STAGE_LABEL[r.stage] ?? r.stage,
@@ -115,8 +116,9 @@ launchesRouter.get('/launches/:id', requirePermission('accounts.read'), asyncHan
     if (!l)
         throw new AppError({ code: 'NOT_FOUND', message: 'Launch was not found.', status: 404, category: 'not_found' });
     const items = await query(`SELECT i.*, a.name AS account_name, a.account_id FROM launch_items i JOIN meta_ad_accounts a ON a.id=i.ad_account_row_id WHERE i.launch_id=? ORDER BY i.position`, [id]);
+    const ads = items.length ? await query(`SELECT * FROM launch_item_ads WHERE launch_item_id IN (?) ORDER BY launch_item_id, position`, [items.map((i) => Number(i.id))]) : [];
     const settings = typeof l.settings === 'string' ? JSON.parse(l.settings) : l.settings;
-    res.json({ id, name: l.name, goal: l.goal, createdAt: l.created_at, by: l.user_name, settings, items: items.map(publicItem) });
+    res.json({ id, name: l.name, goal: l.goal, createdAt: l.created_at, by: l.user_name, settings, items: items.map((i) => publicItem(i, ads.filter((a) => Number(a.launch_item_id) === Number(i.id)))) });
 }));
 launchesRouter.post('/launches/:id/items/:itemId/retry', requirePermission('campaigns.publish', 'create ads on Meta'), asyncHandler(async (req, res) => {
     await retryItem(req.user.orgId, Number(req.params.itemId));

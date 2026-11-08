@@ -1,18 +1,39 @@
 -- =====================================================================================
--- Ads Command Center 0.9.0 : UPGRADE database from schema version 3 to 11
+-- Ads Command Center 0.10.0 : UPGRADE database from schema version 2 to 12
 --
--- Use this ONLY on a database that is at schema version 3. To check: open the table
--- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 3.
+-- Use this ONLY on a database that is at schema version 2. To check: open the table
+-- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 2.
 --   * Back up first: phpMyAdmin -> Export.
---   * Deploy the 0.9.0 files and restart the app before or right after importing.
+--   * Deploy the 0.10.0 files and restart the app before or right after importing.
 --   * If it stops with "Duplicate column" or "Table already exists", this upgrade (or part of it)
 --     was already applied: restore your backup and use the file for your real version instead.
 --   * You can also skip this file: Settings -> Database -> "Apply pending migrations" does the same.
--- Applies: 0004_live_reporting, 0005_lead_call_counts, 0006_dashboard_prefs, 0007_budget_changes, 0008_account_funds, 0009_launches, 0010_ai, 0011_modules
+-- Applies: 0003_two_factor, 0004_live_reporting, 0005_lead_call_counts, 0006_dashboard_prefs, 0007_budget_changes, 0008_account_funds, 0009_launches, 0010_ai, 0011_modules, 0012_launch_ads
 -- =====================================================================================
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
+
+-- ---------------------------------------------------------------- 0003_two_factor
+-- 0003_two_factor: TOTP two-step login with recovery codes.
+
+ALTER TABLE users
+  ADD COLUMN totp_secret_enc TEXT NULL,
+  ADD COLUMN totp_pending_enc TEXT NULL,
+  ADD COLUMN totp_enabled_at DATETIME(3) NULL,
+  ADD COLUMN totp_last_step BIGINT UNSIGNED NULL,
+  ADD COLUMN recovery_codes JSON NULL;
+
+-- Password accepted, code not yet entered. Short-lived, single use, limited attempts.
+CREATE TABLE login_challenges (
+  id CHAR(64) NOT NULL PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  attempts INT UNSIGNED NOT NULL DEFAULT 0,
+  expires_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_login_challenges_user (user_id),
+  CONSTRAINT fk_login_challenges_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------- 0004_live_reporting
 -- 0004_live_reporting: choose which ad accounts the panel manages, and keep their campaigns, ads and daily results in sync.
@@ -415,8 +436,32 @@ CREATE TABLE comment_actions (
 INSERT INTO recurring_schedules (name, queue, type, interval_seconds) VALUES
   ('monitor_scan', 'sync', 'monitor.scan', 1800);
 
+-- ---------------------------------------------------------------- 0012_launch_ads
+-- 0012_launch_ads: several ads (one per video) in one campaign. Each launch item (one account) still gets one
+-- campaign and one ad set; every row here is one ad inside that ad set. Meta IDs are stored as soon as Meta
+-- returns them, so a retry continues where it stopped instead of creating duplicates. Launch items created
+-- before this version have no rows here; the job adds the single ad from the item itself when it runs.
+
+CREATE TABLE launch_item_ads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  launch_item_id BIGINT UNSIGNED NOT NULL,
+  position INT NOT NULL,
+  media_asset_id BIGINT UNSIGNED NOT NULL,
+  caption TEXT NULL,
+  title VARCHAR(255) NULL,
+  video_id VARCHAR(32) NULL,
+  thumbnail_url VARCHAR(2048) NULL,
+  creative_id VARCHAR(32) NULL,
+  ad_id VARCHAR(32) NULL,
+  ad_status VARCHAR(32) NULL,
+  warning VARCHAR(500) NULL,
+  UNIQUE KEY uq_launch_item_ad (launch_item_id, position),
+  CONSTRAINT fk_launch_item_ads_item FOREIGN KEY (launch_item_id) REFERENCES launch_items(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------- record what was applied
 INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
+  (3, '0003_two_factor', '47a2f25e0c80314f2e6d2b89362093445a7a2216aff1499fcbebb4194a749d4e', 'applied', 'upgrade-sql'),
   (4, '0004_live_reporting', '2c7d6b32998a1bb821fae0e851472a114450c595f019eec4a5405971f6d50dc6', 'applied', 'upgrade-sql'),
   (5, '0005_lead_call_counts', 'ec6935a177b44b1b895cade7e894adfc0ec2456997932c65ae8d86817cb26af2', 'applied', 'upgrade-sql'),
   (6, '0006_dashboard_prefs', 'b8846a758b6fc363458a2e054f798dff9f0e564f12a9df35e3456bd7e0a654b7', 'applied', 'upgrade-sql'),
@@ -424,4 +469,5 @@ INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALU
   (8, '0008_account_funds', '73c0bb4d0f513ff177660d25fd9ee6322807fa97c8b6380158d24cc506ec9f26', 'applied', 'upgrade-sql'),
   (9, '0009_launches', 'b90814e072bc0614fc9be6652cf65cd419dee9384ab2e5bce200a52c0e719c3b', 'applied', 'upgrade-sql'),
   (10, '0010_ai', '34b20c7733cc57b2dc305a03485ccad94577d63d31203fbe9f6fb48820932bb4', 'applied', 'upgrade-sql'),
-  (11, '0011_modules', '24f1d70bcd1868e427456b72abdb1d4d9452bd146985e540e650b2fed16a6605', 'applied', 'upgrade-sql');
+  (11, '0011_modules', '24f1d70bcd1868e427456b72abdb1d4d9452bd146985e540e650b2fed16a6605', 'applied', 'upgrade-sql'),
+  (12, '0012_launch_ads', 'ee043359a2e038f8ae94d859b6ca7a42ffb2f503e4e036131166e572e2a159e6', 'applied', 'upgrade-sql');

@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
-import { Download, FileSpreadsheet, Globe, Phone, Rocket, Search, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
+import { Download, FileSpreadsheet, Globe, Phone, Plus, Rocket, Search, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Badge, Button, Card, CardHeader, EmptyState, ErrorAlert, Field, Input, Modal, PageHeader, Segmented, Select, Skeleton, cx } from '../components/ui';
@@ -150,6 +150,9 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
   const [groupId, setGroupId] = useState('');
   const [selected, setSelected] = useState<Record<number, Row>>({});
   const [mediaAssetId, setMediaAssetId] = useState<number | ''>('');
+  /** Ads 2..N: each its own video, with the launch caption and title unless written here. */
+  const [moreAds, setMoreAds] = useState<{ mediaAssetId: number | ''; caption: string; title: string }[]>([]);
+  const patchAd = (i: number, x: Partial<{ mediaAssetId: number | ''; caption: string; title: string }>) => setMoreAds((list) => list.map((a, j) => (j === i ? { ...a, ...x } : a)));
   const [goal, setGoal] = useState<'call' | 'website'>('call');
   const [objective, setObjective] = useState('OUTCOME_ENGAGEMENT');
   const [optimize, setOptimize] = useState('QUALITY_CALL');
@@ -240,6 +243,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
   const countryList = countries.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
   const body = {
     name: name.trim() || 'Untitled launch', goal, optimize, objective, buyingType, spendCap: spendCap === '' ? undefined : Number(spendCap) || 0, pageId: pageId || undefined, mediaAssetId: mediaAssetId || undefined, caption, title, link, cta,
+    moreAds: moreAds.map((a) => ({ mediaAssetId: a.mediaAssetId || undefined, caption: a.caption.trim() || undefined, title: a.title.trim() || undefined })),
     countries: countryList.filter((c) => /^[A-Z]{2}$/.test(c)), ageMin: Number(ageMin) || 18, ageMax: Number(ageMax) || 65, genders,
     advantageAudience: advantage, specialCategory: special, paidBy,
     budget: { kind, mode, start: Number(start) || 0, step: Number(step) || 0 },
@@ -397,14 +401,44 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
             {pages.length === 0 && <div className="mt-3"><Alert tone="warn" title="No Facebook Pages imported">Pages come from your Meta login. Reconnect Meta under Ad Accounts, with the Pages permission, then refresh.</Alert></div>}
           </Section>
 
-          <Section n={2} title="Video" description="From your media library. It is uploaded to each account once and reused next time.">
+          <Section n={2} title="Videos and ads" description="From your media library. Each video becomes its own ad in the same ad set of every account, so Meta spreads the budget across them. A video is uploaded to each account once and reused next time.">
             {videos.length === 0 ? (
               <Alert tone="info" title="No videos in the media library yet" action={<Link to="/media" className="text-sm font-medium text-brand hover:underline">Upload a video</Link>} />
             ) : (
-              <Select className="max-w-md" value={mediaAssetId} onChange={(e) => setMediaAssetId(e.target.value ? Number(e.target.value) : '')} aria-label="Video">
-                <option value="">Choose a video…</option>
-                {videos.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </Select>
+              <>
+                <Field label={moreAds.length ? 'Ad 1 · video' : 'Video'} hint={moreAds.length ? 'Uses the caption and title written in step 3.' : undefined}>
+                  <Select className="max-w-md" value={mediaAssetId} onChange={(e) => setMediaAssetId(e.target.value ? Number(e.target.value) : '')} aria-label="Video">
+                    <option value="">Choose a video…</option>
+                    {videos.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </Select>
+                </Field>
+                {moreAds.map((ad, i) => (
+                  <div key={i} className="mt-4 rounded-xl border border-line p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="text-sm font-semibold text-ink">Ad {i + 2}</div>
+                      <Button size="sm" variant="ghost" icon={<X className="size-3.5" />} onClick={() => setMoreAds((list) => list.filter((_, j) => j !== i))} aria-label={`Remove ad ${i + 2}`}>Remove</Button>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <Field label="Video">
+                        <Select value={ad.mediaAssetId} onChange={(e) => patchAd(i, { mediaAssetId: e.target.value ? Number(e.target.value) : '' })} aria-label={`Video for ad ${i + 2}`}>
+                          <option value="">Choose a video…</option>
+                          {videos.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                        </Select>
+                      </Field>
+                      <Field label="Caption" hint="Empty = same caption as ad 1.">
+                        <textarea className={textareaCls} rows={2} value={ad.caption} onChange={(e) => patchAd(i, { caption: e.target.value })} maxLength={2000} aria-label={`Caption for ad ${i + 2}`} />
+                      </Field>
+                      <Field label="Title (headline)" hint="Empty = same title as ad 1.">
+                        <Input value={ad.title} onChange={(e) => patchAd(i, { title: e.target.value })} maxLength={255} aria-label={`Title for ad ${i + 2}`} />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
+                <div className="mt-4 flex items-center gap-3">
+                  <Button variant="secondary" icon={<Plus className="size-4" />} disabled={moreAds.length >= 9} onClick={() => setMoreAds((list) => [...list, { mediaAssetId: '', caption: '', title: '' }])}>Add another ad</Button>
+                  <span className="text-xs text-ink-3">{moreAds.length + 1} ad{moreAds.length ? 's' : ''} per account, up to 10. All in one campaign and one ad set.</span>
+                </div>
+              </>
             )}
           </Section>
 
@@ -593,7 +627,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
                   <table className="w-full min-w-[820px] text-sm">
                     <thead>
                       <tr className="border-b border-line bg-surface-2 text-left text-xs font-semibold tracking-wide text-ink-3 uppercase">
-                        <th className="w-8 py-2 pl-4 text-right">#</th><th className="px-3 py-2">Account</th><th className="px-2 py-2">Page</th><th className="px-2 py-2">Video</th>
+                        <th className="w-8 py-2 pl-4 text-right">#</th><th className="px-3 py-2">Account</th><th className="px-2 py-2">Page</th><th className="px-2 py-2">{moreAds.length ? 'Videos' : 'Video'}</th>
                         <th className="px-2 py-2">{goal === 'call' ? 'Phone' : 'Website'}</th><th className="px-2 py-2">Age</th><th className="px-2 py-2 text-right">{kind === 'lifetime' ? 'Lifetime budget' : 'Daily budget'}</th><th className="px-4 py-2">Check</th>
                       </tr>
                     </thead>
@@ -603,7 +637,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
                           <td className="py-2 pl-4 text-right text-xs text-ink-3 tabular-nums">{r.position}</td>
                           <td className="px-3 py-2 font-medium text-ink">{r.accountName}</td>
                           <td className="px-2 py-2">{r.pageName ?? '—'}</td>
-                          <td className="max-w-[160px] truncate px-2 py-2" title={r.videoName ?? ''}>{r.videoName ?? '—'}</td>
+                          <td className="max-w-[200px] px-2 py-2" title={(r.ads ?? []).map((a: any) => a.videoName ?? '?').join(', ')}>{(r.ads ?? [{ videoName: r.videoName }]).map((a: any, j: number) => <div key={j} className="truncate">{(r.ads?.length ?? 1) > 1 ? `${j + 1}. ` : ''}{a.videoName ?? '—'}</div>)}</td>
                           <td className="max-w-[200px] truncate px-2 py-2" title={r.link}>{r.link || '—'}</td>
                           <td className="px-2 py-2 tabular-nums">{r.ageMin}–{r.ageMax}</td>
                           <td className="px-2 py-2 text-right font-medium tabular-nums">{r.budget != null ? money(r.budget, r.currency) : '—'}</td>
@@ -642,7 +676,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
             footer={<><Button variant="ghost" onClick={() => setConfirming(false)}>Back</Button><Button loading={launch.isPending} icon={<Rocket className="size-4" />} onClick={() => launch.mutate()}>Yes, create them paused</Button></>}
           >
             <p className="text-sm text-ink-2">
-              The panel will create {p?.rows.length} {objectiveDef?.label ?? ''} campaign{p?.rows.length === 1 ? '' : 's'} ({(setup.data?.buyingTypes ?? []).find((b: any) => b.value === buyingType)?.label ?? buyingType}, optimised for {optimizeOptions.find((o) => o.value === optimize)?.label ?? optimize}), each with one ad set and one ad, in your account order. Everything is created <b>PAUSED</b>, so nothing spends until you switch it on in Ads Manager.
+              The panel will create {p?.rows.length} {objectiveDef?.label ?? ''} campaign{p?.rows.length === 1 ? '' : 's'} ({(setup.data?.buyingTypes ?? []).find((b: any) => b.value === buyingType)?.label ?? buyingType}, optimised for {optimizeOptions.find((o) => o.value === optimize)?.label ?? optimize}), each with one ad set and {p?.adsPerAccount === 1 ? 'one ad' : `${p?.adsPerAccount} ads (one per video)`}, in your account order. Everything is created <b>PAUSED</b>, so nothing spends until you switch it on in Ads Manager.
             </p>
             <p className="mt-2 text-sm text-ink-2">{kind === 'lifetime' ? 'Total lifetime budget' : 'Total daily budget'} once switched on: <b>{p?.totals.map((t: any) => money(t.total, t.currency)).join(' + ')}</b>{kind === 'lifetime' && p?.days ? ` over ${p.days} days` : ''}. {hoursOn && kind === 'lifetime' ? `Ads show only ${from}–${to} each day.` : ''} {enhancements ? 'Advantage+ creative enhancements are allowed.' : 'No Advantage+ changes to the video, caption or headline.'}</p>
             {launch.error && <div className="mt-3"><ErrorAlert error={launch.error} /></div>}

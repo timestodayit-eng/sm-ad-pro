@@ -1,75 +1,18 @@
 -- =====================================================================================
--- Ads Command Center 0.9.0 : UPGRADE database from schema version 9 to 11
+-- Ads Command Center 0.10.0 : UPGRADE database from schema version 10 to 12
 --
--- Use this ONLY on a database that is at schema version 9. To check: open the table
--- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 9.
+-- Use this ONLY on a database that is at schema version 10. To check: open the table
+-- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 10.
 --   * Back up first: phpMyAdmin -> Export.
---   * Deploy the 0.9.0 files and restart the app before or right after importing.
+--   * Deploy the 0.10.0 files and restart the app before or right after importing.
 --   * If it stops with "Duplicate column" or "Table already exists", this upgrade (or part of it)
 --     was already applied: restore your backup and use the file for your real version instead.
 --   * You can also skip this file: Settings -> Database -> "Apply pending migrations" does the same.
--- Applies: 0010_ai, 0011_modules
+-- Applies: 0011_modules, 0012_launch_ads
 -- =====================================================================================
 
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
-
--- ---------------------------------------------------------------- 0010_ai
--- 0010_ai: AI Copilot conversations and AI Documents (versioned, section-based reports).
--- AI Analytics findings are computed from synced data on request and are not stored.
-
-CREATE TABLE ai_conversations (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  org_id BIGINT UNSIGNED NOT NULL,
-  user_id BIGINT UNSIGNED NOT NULL,
-  title VARCHAR(190) NOT NULL,
-  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  KEY idx_ai_conv_user (org_id, user_id, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE ai_messages (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  conversation_id BIGINT UNSIGNED NOT NULL,
-  -- user | assistant | tool
-  role VARCHAR(12) NOT NULL,
-  content MEDIUMTEXT NULL,
-  -- assistant: the tool calls it asked for; tool: the call it answers
-  tool_calls JSON NULL,
-  tool_call_id VARCHAR(64) NULL,
-  tool_name VARCHAR(64) NULL,
-  -- a change the assistant proposed (for example a budget plan); applied only through the normal confirm flow
-  proposal JSON NULL,
-  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  KEY idx_ai_msg_conv (conversation_id, id),
-  CONSTRAINT fk_ai_msg_conv FOREIGN KEY (conversation_id) REFERENCES ai_conversations(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE ai_documents (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  org_id BIGINT UNSIGNED NOT NULL,
-  user_id BIGINT UNSIGNED NULL,
-  title VARCHAR(190) NOT NULL,
-  -- performance (more kinds later)
-  kind VARCHAR(32) NOT NULL,
-  params JSON NOT NULL,
-  current_version INT NOT NULL DEFAULT 1,
-  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  KEY idx_ai_docs_org (org_id, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE ai_document_versions (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  document_id BIGINT UNSIGNED NOT NULL,
-  version INT NOT NULL,
-  sections JSON NOT NULL,
-  note VARCHAR(255) NULL,
-  created_by BIGINT UNSIGNED NULL,
-  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  UNIQUE KEY uq_ai_doc_version (document_id, version),
-  CONSTRAINT fk_ai_docver_doc FOREIGN KEY (document_id) REFERENCES ai_documents(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------- 0011_modules
 -- 0011_modules: Audience Manager, Placements, Custom Reports, Finance, Monitoring and Comments.
@@ -177,7 +120,30 @@ CREATE TABLE comment_actions (
 INSERT INTO recurring_schedules (name, queue, type, interval_seconds) VALUES
   ('monitor_scan', 'sync', 'monitor.scan', 1800);
 
+-- ---------------------------------------------------------------- 0012_launch_ads
+-- 0012_launch_ads: several ads (one per video) in one campaign. Each launch item (one account) still gets one
+-- campaign and one ad set; every row here is one ad inside that ad set. Meta IDs are stored as soon as Meta
+-- returns them, so a retry continues where it stopped instead of creating duplicates. Launch items created
+-- before this version have no rows here; the job adds the single ad from the item itself when it runs.
+
+CREATE TABLE launch_item_ads (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  launch_item_id BIGINT UNSIGNED NOT NULL,
+  position INT NOT NULL,
+  media_asset_id BIGINT UNSIGNED NOT NULL,
+  caption TEXT NULL,
+  title VARCHAR(255) NULL,
+  video_id VARCHAR(32) NULL,
+  thumbnail_url VARCHAR(2048) NULL,
+  creative_id VARCHAR(32) NULL,
+  ad_id VARCHAR(32) NULL,
+  ad_status VARCHAR(32) NULL,
+  warning VARCHAR(500) NULL,
+  UNIQUE KEY uq_launch_item_ad (launch_item_id, position),
+  CONSTRAINT fk_launch_item_ads_item FOREIGN KEY (launch_item_id) REFERENCES launch_items(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ---------------------------------------------------------------- record what was applied
 INSERT INTO schema_migrations (version, name, checksum, status, applied_by) VALUES
-  (10, '0010_ai', '34b20c7733cc57b2dc305a03485ccad94577d63d31203fbe9f6fb48820932bb4', 'applied', 'upgrade-sql'),
-  (11, '0011_modules', '24f1d70bcd1868e427456b72abdb1d4d9452bd146985e540e650b2fed16a6605', 'applied', 'upgrade-sql');
+  (11, '0011_modules', '24f1d70bcd1868e427456b72abdb1d4d9452bd146985e540e650b2fed16a6605', 'applied', 'upgrade-sql'),
+  (12, '0012_launch_ads', 'ee043359a2e038f8ae94d859b6ca7a42ffb2f503e4e036131166e572e2a159e6', 'applied', 'upgrade-sql');
