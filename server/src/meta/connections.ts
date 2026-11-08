@@ -123,7 +123,7 @@ export async function handleCallback(params: { code?: string; state?: string; er
 }
 
 export function decryptConnectionToken(row: any): string {
-  return decryptSecret(row.token_ciphertext, env().TOKEN_ENCRYPTION_KEY);
+  return decryptSecret(row.token_ciphertext, env().TOKEN_ENCRYPTION_KEY, 'the Meta login');
 }
 
 interface GraphAdAccount {

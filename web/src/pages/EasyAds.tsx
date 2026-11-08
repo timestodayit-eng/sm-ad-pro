@@ -456,7 +456,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
               <Field label="What should people do?" hint={objectiveDef && objectiveDef[goal] === null ? `${objectiveDef.label} does not work with ${goal === 'call' ? 'calls' : 'a website'} here.` : undefined}>
                 <Segmented label="Goal" value={goal} onChange={setGoal} options={[{ value: 'call', label: 'Call', icon: <Phone className="size-4" /> }, { value: 'website', label: 'Visit website', icon: <Globe className="size-4" /> }]} />
               </Field>
-              <Field label="Meta optimizes for">
+              <Field label="Meta optimizes for" hint={optimizeOptions.find((o) => o.value === optimize)?.note ?? undefined}>
                 <Select value={optimize} onChange={(e) => setOptimize(e.target.value)} disabled={!optimizeOptions.length}>{optimizeOptions.length ? optimizeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>) : <option value="">Not available for this objective and goal</option>}</Select>
               </Field>
               <Field label={goal === 'call' ? 'Phone number' : 'Website address'} hint={goal === 'call' ? 'With country code, for example +1 555 010 2000. Leave empty to use each account’s saved number.' : 'Starting with https://. Leave empty to use each account’s saved website.'}>

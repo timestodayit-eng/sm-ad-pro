@@ -2,7 +2,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { execute, queryOne } from '../src/db/pool.js';
-import { hashPassword } from '../src/lib/crypto.js';
+import { encryptSecret, hashPassword } from '../src/lib/crypto.js';
 import { base32Decode, base32Encode, currentStep, hotp, verifyTotp } from '../src/auth/totp.js';
 import { closePool, freshDb, TEST_ORIGIN } from './helpers.js';
 
@@ -160,5 +160,19 @@ describe('two-step login', () => {
     expect((await a2.get('/api/auth/me')).status).toBe(401);
     const audit = await queryOne(`SELECT action FROM audit_logs WHERE action='user.mfa_reset' AND target_id=?`, [String(target.id)]);
     expect(audit).toBeTruthy();
+  });
+  it('names the encryption key setting when the stored secret cannot be decrypted, instead of an unexpected error', async () => {
+    const u = await queryOne(`SELECT id, totp_secret_enc FROM users WHERE email='boss@example.test'`);
+    const otherKey = Buffer.alloc(32, 7).toString('base64');
+    await execute(`UPDATE users SET totp_secret_enc=? WHERE id=?`, [encryptSecret(secret, otherKey), u.id]);
+    const agent = request.agent(app);
+    const r = await agent.post('/api/auth/login').set('Origin', TEST_ORIGIN).send({ email: 'boss@example.test', password: pw });
+    expect(r.body.mfaRequired).toBe(true); // the password step does not need the key
+    const v = await agent.post('/api/auth/login/verify').set('Origin', TEST_ORIGIN).send({ challenge: r.body.challenge, code: hotp(secret, currentStep() + 5) });
+    expect(v.status).toBe(500);
+    expect(v.body.error.code).toBe('ENCRYPTION_KEY_MISMATCH');
+    expect(v.body.error.message).toMatch(/TOKEN_ENCRYPTION_KEY/);
+    expect(v.body.error.hint).toMatch(/recovery code/);
+    await execute(`UPDATE users SET totp_secret_enc=? WHERE id=?`, [u.totp_secret_enc, u.id]);
   });
 });

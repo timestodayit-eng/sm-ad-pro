@@ -40,7 +40,12 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (anyErr?.type === 'entity.too.large') {
     return res.status(413).json(new AppError({ code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.', status: 413, category: 'validation' }).toJSON(cid));
   }
-  logger.error({ err, cid, path: req.path }, 'unhandled error');
+  // Hosting log viewers often show only the message line, so the cause goes into it too.
+  const cause = String(anyErr?.message ?? anyErr).slice(0, 300);
+  logger.error({ err, cid, path: req.path }, `unhandled error at ${req.method} ${req.path}: ${anyErr?.code ? `${anyErr.code} ` : ''}${cause}`);
+  // Database and network errors (ER_*, ECONN*, ETIMEDOUT…) carry no secrets and name the real problem, so an admin
+  // sees them in the panel. Anything else stays in the log.
+  const infra = typeof anyErr?.code === 'string' && /^(ER_|E[A-Z]+$|PROTOCOL_)/.test(anyErr.code);
   const wrapped = new AppError({
     code: 'INTERNAL_ERROR',
     message: 'Unexpected server error.',
@@ -48,7 +53,8 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     category: 'internal',
     operation: `${req.method} ${req.path}`,
     retryable: true,
-    hint: `Try again. If it repeats, open System Health or share correlation ID ${cid}.`,
+    hint: infra ? `${anyErr.code}: ${cause}` : `Try again. If it repeats, open System Health or share correlation ID ${cid}.`,
+    details: infra ? { cause: `${anyErr.code}: ${cause}` } : undefined,
   });
   res.status(500).json(wrapped.toJSON(cid));
 }

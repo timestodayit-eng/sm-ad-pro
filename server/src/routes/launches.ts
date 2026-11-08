@@ -46,7 +46,7 @@ launchesRouter.get(
       videos: (await readyVideos(user.orgId)).map((v) => ({ id: Number(v.id), name: v.original_name, durationMs: v.duration_ms })),
       goals: Object.fromEntries(Object.entries(GOALS).map(([k, v]) => [k, Object.entries(v).map(([o, g]) => ({ value: o, label: g.label }))])),
       buyingTypes: BUYING_TYPES,
-      objectives: Object.entries(OBJECTIVES).map(([value, o]) => ({ value, label: o.label, note: o.note ?? null, call: o.call ? Object.entries(o.call).map(([k, v]) => ({ value: k, label: v.label })) : null, website: o.website ? Object.entries(o.website).map(([k, v]) => ({ value: k, label: v.label })) : null })),
+      objectives: Object.entries(OBJECTIVES).map(([value, o]) => ({ value, label: o.label, note: o.note ?? null, call: o.call ? Object.entries(o.call).map(([k, v]) => ({ value: k, label: v.label, note: v.note ?? null })) : null, website: o.website ? Object.entries(o.website).map(([k, v]) => ({ value: k, label: v.label, note: v.note ?? null })) : null })),
       ctas: WEBSITE_CTAS,
       placements: Object.entries(PLACEMENTS).map(([value, p]) => ({ value, label: p.label })),
       defaultPlacements: DEFAULT_PLACEMENTS,

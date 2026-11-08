@@ -16,7 +16,7 @@ const limiter = rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: '
 const CHALLENGE_MINUTES = 5;
 const CHALLENGE_ATTEMPTS = 5;
 const enc = (s) => encryptSecret(s, env().TOKEN_ENCRYPTION_KEY);
-const dec = (s) => decryptSecret(s, env().TOKEN_ENCRYPTION_KEY);
+const dec = (s) => decryptSecret(s, env().TOKEN_ENCRYPTION_KEY, 'your two-step login secret');
 const codeSchema = z.string().trim().min(6).max(20);
 function codesOf(u) {
     const v = u?.recovery_codes;

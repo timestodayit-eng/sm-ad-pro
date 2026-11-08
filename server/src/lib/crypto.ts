@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scrypt as scryptCb, timingSafeEqual, createHash, createHmac } from 'node:crypto';
+import { AppError } from './errors.js';
 
 // scrypt parameters: N=2^15, r=8, p=1 (about 32 MiB, ~100 ms). No native build needed on Hostinger.
 const SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -46,10 +47,26 @@ export function encryptSecret(plain: string, keyB64: string): string {
   return Buffer.concat([iv, cipher.getAuthTag(), ct]).toString('base64');
 }
 
-export function decryptSecret(payload: string, keyB64: string): string {
-  const key = Buffer.from(keyB64, 'base64');
-  const buf = Buffer.from(payload, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
-  decipher.setAuthTag(buf.subarray(12, 28));
-  return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+/**
+ * Decrypts a value stored with encryptSecret. AES-GCM refuses to decrypt with another key, so a failure here almost
+ * always means the TOKEN_ENCRYPTION_KEY hosting setting is not the one the value was stored with (lost or changed
+ * on a redeploy). That is said plainly instead of an "unexpected server error".
+ */
+export function decryptSecret(payload: string, keyB64: string, what = 'this value'): string {
+  try {
+    const key = Buffer.from(keyB64, 'base64');
+    const buf = Buffer.from(payload, 'base64');
+    const decipher = createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
+    decipher.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+  } catch (err) {
+    throw new AppError({
+      code: 'ENCRYPTION_KEY_MISMATCH',
+      message: `The TOKEN_ENCRYPTION_KEY hosting setting is not the key ${what} was encrypted with.`,
+      status: 500,
+      category: 'configuration',
+      hint: 'Restore the original TOKEN_ENCRYPTION_KEY in the hosting environment (Hostinger → your app → Environment variables) and restart the app. If it is lost for good, sign in with a recovery code, set up two-step login again under Security and reconnect Meta under Ad Accounts.',
+      cause: err,
+    });
+  }
 }

@@ -1,6 +1,6 @@
 {
   "name": "ads-command-center",
-  "version": "0.10.0",
+  "version": "0.10.3",
   "private": true,
   "type": "module",
   "description": "AI-powered multi-account Meta Ads Command Center",

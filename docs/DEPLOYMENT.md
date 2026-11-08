@@ -39,7 +39,7 @@ Generate secrets on your own computer:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"   # SESSION_SECRET, JOB_RUNNER_SECRET, SETUP_TOKEN
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"      # TOKEN_ENCRYPTION_KEY
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"      # TOKEN_ENCRYPTION_KEY (keep a private copy: it must never change)
 ```
 
 No Node on your computer? Use hPanel → Advanced → SSH terminal (or any Mac/Linux terminal) and run

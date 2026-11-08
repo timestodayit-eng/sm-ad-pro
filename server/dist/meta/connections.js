@@ -109,7 +109,7 @@ export async function handleCallback(params, ip) {
     return { connectionId, metaUserName: me.name, missingScopes: missing };
 }
 export function decryptConnectionToken(row) {
-    return decryptSecret(row.token_ciphertext, env().TOKEN_ENCRYPTION_KEY);
+    return decryptSecret(row.token_ciphertext, env().TOKEN_ENCRYPTION_KEY, 'the Meta login');
 }
 /** Imports every ad account and Page the connection can reach. No account-count limit (bug 14). */
 export const MISSING_BUSINESS_MANAGEMENT = 'Imported without business names: this login did not grant business_management. Add business_management to your Facebook Login for Business configuration, then press Connect Meta again.';

@@ -20,7 +20,7 @@ const CHALLENGE_MINUTES = 5;
 const CHALLENGE_ATTEMPTS = 5;
 
 const enc = (s: string) => encryptSecret(s, env().TOKEN_ENCRYPTION_KEY);
-const dec = (s: string) => decryptSecret(s, env().TOKEN_ENCRYPTION_KEY);
+const dec = (s: string) => decryptSecret(s, env().TOKEN_ENCRYPTION_KEY, 'your two-step login secret');
 const codeSchema = z.string().trim().min(6).max(20);
 
 function codesOf(u: any): string[] {

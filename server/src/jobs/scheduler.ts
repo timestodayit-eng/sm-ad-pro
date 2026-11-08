@@ -80,7 +80,7 @@ async function runJob(job: Job, workerId: string): Promise<'succeeded' | 'failed
   } catch (err) {
     if (rescheduled) return 'rescheduled';
     const failure = toFailure(err);
-    logger.warn({ jobId: job.id, type: job.type, failure }, 'job failed');
+    logger.warn({ jobId: job.id, type: job.type, failure }, `job failed: ${job.type} #${job.id}: ${failure.code} ${failure.message}`);
     await markFailed(job, workerId, failure);
     return 'failed';
   }

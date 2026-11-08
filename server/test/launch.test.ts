@@ -307,7 +307,10 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
     expect(setup.objectives.find((o: any) => o.value === 'OUTCOME_LEADS').website).toBeNull();
     expect(setup.buyingTypes.map((b: any) => [b.value, b.supported])).toEqual([['AUCTION', true], ['RESERVED', false]]);
     // what Meta cannot do with the panel's inputs is said up front
-    expect((await plan({ ...base(), pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_LEADS', optimize: 'LINK_CLICKS' })).problems).toContain('Leads runs as Calls: conversion location Calls, performance goal "Maximize number of calls", with your Facebook Page. Choose the Call goal below.');
+    expect((await plan({ ...base(), pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_LEADS', optimize: 'LINK_CLICKS' })).problems).toContain('Leads runs as Calls: conversion location Calls, with your Facebook Page. Pick the performance goal under "Meta optimizes for".');
+    // the Calls performance goals Meta's API lists: calls, and 60-second calls (undocumented by Meta, passed through as is)
+    expect(setup.objectives.find((o: any) => o.value === 'OUTCOME_LEADS').call.map((x: any) => x.value)).toEqual(['QUALITY_CALL', 'MEANINGFUL_CALL_ATTEMPT']);
+    expect((await plan({ ...base(), pageId: '501', objective: 'OUTCOME_LEADS', optimize: 'MEANINGFUL_CALL_ATTEMPT' })).goal).toMatchObject({ optimization_goal: 'MEANINGFUL_CALL_ATTEMPT', destination_type: 'PHONE_CALL', promotedPage: true });
     // Leads + Call builds exactly the Ads Manager ad set: conversion location Calls, "Maximize number of calls", the Page promoted
     expect((await plan({ ...base(), pageId: '501', objective: 'OUTCOME_LEADS', optimize: 'QUALITY_CALL' })).goal).toMatchObject({ objective: 'OUTCOME_LEADS', optimization_goal: 'QUALITY_CALL', destination_type: 'PHONE_CALL', promotedPage: true, label: 'Maximize number of calls' });
     expect((await plan({ ...base(), pageId: '501', buyingType: 'RESERVED' })).problems).toContain('Only the Auction buying type is supported. Reserved buying needs a reach and frequency prediction.');

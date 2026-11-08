@@ -30,6 +30,9 @@ export const GOALS = {
  * Leads and Sales on a website need a pixel and App promotion needs an app, so those say so instead.
  */
 export const BUYING_TYPES = [{ value: 'AUCTION', label: 'Auction', supported: true }, { value: 'RESERVED', label: 'Reserved (reach and frequency)', supported: false, note: 'Needs a reach and frequency prediction. Not supported by the panel.' }];
+/** Ads Manager's "Maximize number of 60-second calls". Meta's API lists MEANINGFUL_CALL_ATTEMPT without documenting it; the panel sends it as is. */
+const CALL_60S = { label: 'Maximize number of 60-second calls', destination_type: 'PHONE_CALL', promotedPage: true, note: 'Meta lists this goal (MEANINGFUL_CALL_ATTEMPT) but does not document it. Not yet tried from the panel: if Meta refuses it, the row shows Meta\'s message and you can retry with "Maximize number of calls".' };
+const CALLS = { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true };
 export const OBJECTIVES = {
     OUTCOME_AWARENESS: {
         label: 'Awareness',
@@ -38,17 +41,17 @@ export const OBJECTIVES = {
     },
     OUTCOME_TRAFFIC: {
         label: 'Traffic',
-        call: { LINK_CLICKS: { label: 'Clicks on Call', destination_type: 'PHONE_CALL', promotedPage: true } },
+        call: { LINK_CLICKS: { label: 'Clicks on Call', destination_type: 'PHONE_CALL', promotedPage: true }, QUALITY_CALL: CALLS, MEANINGFUL_CALL_ATTEMPT: CALL_60S },
         website: { LINK_CLICKS: { label: 'Link clicks', destination_type: 'WEBSITE' }, LANDING_PAGE_VIEWS: { label: 'Landing page views', destination_type: 'WEBSITE' }, IMPRESSIONS: { label: 'Impressions', destination_type: 'WEBSITE' }, REACH: { label: 'Reach', destination_type: 'WEBSITE' } },
     },
     OUTCOME_ENGAGEMENT: {
         label: 'Engagement',
-        call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } },
+        call: { QUALITY_CALL: CALLS },
         website: { LINK_CLICKS: { label: 'Link clicks', destination_type: 'WEBSITE' }, THRUPLAY: { label: 'Video views (ThruPlay)', destination_type: 'ON_VIDEO', promotedPage: true }, POST_ENGAGEMENT: { label: 'Post engagement', destination_type: 'ON_POST', promotedPage: true } },
     },
     // Ads Manager: Leads → conversion location "Calls", performance goal "Maximize number of calls", with the Facebook Page.
-    OUTCOME_LEADS: { label: 'Leads', call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Leads runs as Calls: conversion location Calls, performance goal "Maximize number of calls", with your Facebook Page. Choose the Call goal below.' },
-    OUTCOME_SALES: { label: 'Sales', call: { QUALITY_CALL: { label: 'Maximize number of calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Sales runs as Calls here: conversion location Calls, performance goal "Maximize number of calls". Choose the Call goal below.' },
+    OUTCOME_LEADS: { label: 'Leads', call: { QUALITY_CALL: CALLS, MEANINGFUL_CALL_ATTEMPT: CALL_60S }, website: null, note: 'Leads runs as Calls: conversion location Calls, with your Facebook Page. Pick the performance goal under "Meta optimizes for".' },
+    OUTCOME_SALES: { label: 'Sales', call: { QUALITY_CALL: CALLS, MEANINGFUL_CALL_ATTEMPT: CALL_60S }, website: null, note: 'Sales runs as Calls here: conversion location Calls, performance goal "Maximize number of calls". Choose the Call goal below.' },
     OUTCOME_APP_PROMOTION: { label: 'App promotion', call: null, website: null, note: 'Needs an app registered with Meta. Not supported by the panel.' },
 };
 /** Older launches saved goal + optimize only; these are the objectives and names they meant. */
