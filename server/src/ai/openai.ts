@@ -40,12 +40,36 @@ export function requireAi() {
     throw new AppError({ code: 'AI_NOT_CONFIGURED', message: 'The AI assistant is not configured on this server.', status: 503, category: 'configuration', hint: 'Set OPENAI_API_KEY and OPENAI_MODEL in the hosting settings, then restart the app.' });
 }
 
+/** Models that refused a parameter (reasoning models accept only the default temperature); remembered per process. */
+const unsupported = new Map<string, Set<string>>();
+
 export async function chat(messages: ChatMessage[], opts: { tools?: ToolDef[]; temperature?: number; maxTokens?: number; json?: boolean } = {}): Promise<ChatResult> {
   requireAi();
   const e = env();
-  const body: Record<string, unknown> = { model: e.OPENAI_MODEL, messages, temperature: opts.temperature ?? 0.2, max_completion_tokens: opts.maxTokens ?? 1500 };
+  const model = e.OPENAI_MODEL!;
+  const skip = unsupported.get(model) ?? new Set<string>();
+  // Temperature is sent only when a caller asks for one and the model has not refused it before.
+  const body: Record<string, unknown> = { model, messages, max_completion_tokens: opts.maxTokens ?? 1500 };
+  if (opts.temperature !== undefined && !skip.has('temperature')) body.temperature = opts.temperature;
   if (opts.tools?.length) body.tools = opts.tools, (body.tool_choice = 'auto');
   if (opts.json) body.response_format = { type: 'json_object' };
+  const { res, data } = await send(e, body);
+  if (!res.ok) {
+    const msg = String(data?.error?.message ?? `HTTP ${res.status}`).slice(0, 500);
+    // "Unsupported value: 'temperature' does not support 0.2 with this model": drop it and try once more.
+    const m = res.status === 400 && /unsupported (value|parameter)[^']*'(\w+)'/i.exec(msg);
+    if (m && m[2] in body && m[2] !== 'model' && m[2] !== 'messages') {
+      skip.add(m[2]);
+      unsupported.set(model, skip);
+      delete body[m[2]];
+      logger.info({ model, parameter: m[2] }, 'openai refused a parameter; retrying without it');
+      return finish(await send(e, body), e);
+    }
+  }
+  return finish({ res, data }, e);
+}
+
+async function send(e: ReturnType<typeof env>, body: Record<string, unknown>) {
   let res: Response;
   try {
     res = await fetchImpl(`${(e.OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`, {
@@ -64,6 +88,10 @@ export async function chat(messages: ChatMessage[], opts: { tools?: ToolDef[]; t
   } catch {
     /* non-JSON handled below */
   }
+  return { res, data };
+}
+
+function finish({ res, data }: { res: Response; data: any }, e: ReturnType<typeof env>): ChatResult {
   if (!res.ok) {
     const msg = String(data?.error?.message ?? `HTTP ${res.status}`).slice(0, 500);
     logger.warn({ status: res.status, msg }, 'openai error');

@@ -142,6 +142,27 @@ describe('AI Copilot, documents and exports', () => {
     expect(conv.messages.at(-1)).toMatchObject({ role: 'assistant', error: true, content: expect.stringContaining('rate-limiting') });
   });
 
+  it('drops a parameter the model refuses (reasoning models take only the default temperature) and tries once more', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const before = requests.length;
+    script = [
+      { status: 400, body: { error: { message: "Unsupported value: 'temperature' does not support 0.5 with this model. Only the default (1) value is supported." } } },
+      { role: 'assistant', content: 'Thanks for asking! Please message us for the price.' },
+    ];
+    const r = await agent.post('/api/comments/suggest').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ comment: 'Price?', post: 'Sale', pageName: 'P' });
+    expect(r.status).toBe(200);
+    expect(r.body.text).toMatch(/price/);
+    expect(requests.length - before).toBe(2);
+    expect(requests[before].body.temperature).toBe(0.5);
+    expect(requests[before + 1].body.temperature).toBeUndefined();
+    // remembered: the next call for this model never sends it
+    script = [{ role: 'assistant', content: 'ok' }];
+    await agent.post('/api/comments/suggest').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ comment: 'Hi', pageName: 'P' });
+    expect(requests.at(-1)!.body.temperature).toBeUndefined();
+    // copilot chat sends no temperature at all
+    expect(requests.find((q) => q.body.tools)?.body.temperature).toBeUndefined();
+  });
+
   it('lists findings from synced data without calling the model', async () => {
     const { agent } = await signIn(app, 'boss@example.test', pw);
     const before = requests.length;
