@@ -1,5 +1,5 @@
 -- =====================================================================================
--- Ads Command Center 0.8.1 : FRESH INSTALL database (schema version 11)
+-- Ads Command Center 0.9.0 : FRESH INSTALL database (schema version 11)
 --
 -- You normally do NOT need this file: the app's Setup page installs the database itself.
 -- Use it only if you prefer to import with phpMyAdmin (MySQL 8).

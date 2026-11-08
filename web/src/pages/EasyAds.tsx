@@ -151,7 +151,10 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
   const [selected, setSelected] = useState<Record<number, Row>>({});
   const [mediaAssetId, setMediaAssetId] = useState<number | ''>('');
   const [goal, setGoal] = useState<'call' | 'website'>('call');
-  const [optimize, setOptimize] = useState('calls');
+  const [objective, setObjective] = useState('OUTCOME_ENGAGEMENT');
+  const [optimize, setOptimize] = useState('QUALITY_CALL');
+  const [buyingType, setBuyingType] = useState('AUCTION');
+  const [spendCap, setSpendCap] = useState('');
   const [link, setLink] = useState('');
   const [cta, setCta] = useState('LEARN_MORE');
   const [caption, setCaption] = useState('');
@@ -225,14 +228,18 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
     onSuccess: (r: any) => { setSavingAudience(false); setAudienceName(''); savedAudiences.refetch(); setAudienceId(String(r.id)); },
   });
 
+  const objectives: any[] = setup.data?.objectives ?? [];
+  const objectiveDef = objectives.find((o) => o.value === objective);
+  const optimizeOptions: any[] = objectiveDef?.[goal] ?? [];
   useEffect(() => {
-    setOptimize(goal === 'call' ? 'calls' : 'clicks');
-  }, [goal]);
+    // Keep a valid optimisation for the chosen objective and goal; Calls under Engagement stays the default.
+    if (optimizeOptions.length && !optimizeOptions.some((o) => o.value === optimize)) setOptimize(optimizeOptions[0].value);
+  }, [goal, objective, optimizeOptions.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = useMemo(() => accounts.filter((a) => selected[a.id]).map((a) => selected[a.id]), [accounts, selected]);
   const countryList = countries.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
   const body = {
-    name: name.trim() || 'Untitled launch', goal, optimize, pageId: pageId || undefined, mediaAssetId: mediaAssetId || undefined, caption, title, link, cta,
+    name: name.trim() || 'Untitled launch', goal, optimize, objective, buyingType, spendCap: spendCap === '' ? undefined : Number(spendCap) || 0, pageId: pageId || undefined, mediaAssetId: mediaAssetId || undefined, caption, title, link, cta,
     countries: countryList.filter((c) => /^[A-Z]{2}$/.test(c)), ageMin: Number(ageMin) || 18, ageMax: Number(ageMax) || 65, genders,
     advantageAudience: advantage, specialCategory: special, paidBy,
     budget: { kind, mode, start: Number(start) || 0, step: Number(step) || 0 },
@@ -293,7 +300,6 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
   const issues = (p?.rows ?? []).reduce((n: number, r: any) => n + r.issues.length, 0) + (p?.problems?.length ?? 0);
   const canLaunch = can('campaigns.publish');
   const ready = Boolean(p?.ready) && name.trim() !== '' && !plan.isFetching;
-  const optimizeOptions: any[] = setup.data?.goals?.[goal] ?? [];
 
   if (setup.isLoading) return <Skeleton className="h-96 rounded-2xl" />;
 
@@ -402,13 +408,22 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
             )}
           </Section>
 
-          <Section n={3} title="Goal and ad text">
+          <Section n={3} title="Campaign, goal and ad text" description="Buying type and campaign objective as in Ads Manager. The panel lists only the objective and goal pairs it can build with a video, a Page, a phone number or a website.">
+            <div className="mb-4 grid gap-4 lg:grid-cols-3">
+              <Field label="Buying type" hint={buyingType !== 'AUCTION' ? (setup.data?.buyingTypes ?? []).find((b: any) => b.value === buyingType)?.note : undefined}>
+                <Select value={buyingType} onChange={(e) => setBuyingType(e.target.value)} aria-label="Buying type">{(setup.data?.buyingTypes ?? []).map((b: any) => <option key={b.value} value={b.value}>{b.label}{b.supported ? '' : ' (not supported)'}</option>)}</Select>
+              </Field>
+              <Field label="Campaign objective" hint={objectiveDef?.note ?? undefined}>
+                <Select value={objective} onChange={(e) => setObjective(e.target.value)} aria-label="Campaign objective">{objectives.map((o) => <option key={o.value} value={o.value}>{o.label}{o.call || o.website ? '' : ' (not supported)'}</option>)}</Select>
+              </Field>
+              {advanced && <Field label="Campaign spending limit" hint="Optional. In each account’s currency, at least 100. Meta stops the campaign at this amount."><Input className="w-40" inputMode="decimal" value={spendCap} onChange={(e) => setSpendCap(e.target.value)} placeholder="none" /></Field>}
+            </div>
             <div className="grid gap-4 lg:grid-cols-2">
-              <Field label="What should people do?">
+              <Field label="What should people do?" hint={objectiveDef && objectiveDef[goal] === null ? `${objectiveDef.label} does not work with ${goal === 'call' ? 'calls' : 'a website'} here.` : undefined}>
                 <Segmented label="Goal" value={goal} onChange={setGoal} options={[{ value: 'call', label: 'Call', icon: <Phone className="size-4" /> }, { value: 'website', label: 'Visit website', icon: <Globe className="size-4" /> }]} />
               </Field>
               <Field label="Meta optimizes for">
-                <Select value={optimize} onChange={(e) => setOptimize(e.target.value)}>{optimizeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</Select>
+                <Select value={optimize} onChange={(e) => setOptimize(e.target.value)} disabled={!optimizeOptions.length}>{optimizeOptions.length ? optimizeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>) : <option value="">Not available for this objective and goal</option>}</Select>
               </Field>
               <Field label={goal === 'call' ? 'Phone number' : 'Website address'} hint={goal === 'call' ? 'With country code, for example +1 555 010 2000. Leave empty to use each account’s saved number.' : 'Starting with https://. Leave empty to use each account’s saved website.'}>
                 <Input value={link} onChange={(e) => setLink(e.target.value)} placeholder={goal === 'call' ? '+1 555 010 2000' : 'https://'} />
@@ -627,7 +642,7 @@ export function LaunchForm({ advanced }: { advanced: boolean }) {
             footer={<><Button variant="ghost" onClick={() => setConfirming(false)}>Back</Button><Button loading={launch.isPending} icon={<Rocket className="size-4" />} onClick={() => launch.mutate()}>Yes, create them paused</Button></>}
           >
             <p className="text-sm text-ink-2">
-              The panel will create {p?.rows.length} campaign{p?.rows.length === 1 ? '' : 's'}, each with one ad set and one ad, in your account order. Everything is created <b>PAUSED</b>, so nothing spends until you switch it on in Ads Manager.
+              The panel will create {p?.rows.length} {objectiveDef?.label ?? ''} campaign{p?.rows.length === 1 ? '' : 's'} ({(setup.data?.buyingTypes ?? []).find((b: any) => b.value === buyingType)?.label ?? buyingType}, optimised for {optimizeOptions.find((o) => o.value === optimize)?.label ?? optimize}), each with one ad set and one ad, in your account order. Everything is created <b>PAUSED</b>, so nothing spends until you switch it on in Ads Manager.
             </p>
             <p className="mt-2 text-sm text-ink-2">{kind === 'lifetime' ? 'Total lifetime budget' : 'Total daily budget'} once switched on: <b>{p?.totals.map((t: any) => money(t.total, t.currency)).join(' + ')}</b>{kind === 'lifetime' && p?.days ? ` over ${p.days} days` : ''}. {hoursOn && kind === 'lifetime' ? `Ads show only ${from}–${to} each day.` : ''} {enhancements ? 'Advantage+ creative enhancements are allowed.' : 'No Advantage+ changes to the video, caption or headline.'}</p>
             {launch.error && <div className="mt-3"><ErrorAlert error={launch.error} /></div>}

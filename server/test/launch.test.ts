@@ -299,6 +299,37 @@ describe('Easy Ads launches, all PAUSED, in the account order', () => {
     expect(JSON.parse(cr.degrees_of_freedom_spec).creative_features_spec.standard_enhancements).toEqual({ enroll_status: 'OPT_OUT' });
   });
 
+  it('campaign objective and buying type are chosen by hand; unsupported pairs are named before anything is created', async () => {
+    const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
+    const plan = (b: any) => agent.post('/api/launch/plan').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send(b).then((r) => r.body);
+    const setup = (await agent.get('/api/launch/setup')).body;
+    expect(setup.objectives.map((o: any) => o.value)).toEqual(['OUTCOME_AWARENESS', 'OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS', 'OUTCOME_SALES', 'OUTCOME_APP_PROMOTION']);
+    expect(setup.objectives.find((o: any) => o.value === 'OUTCOME_LEADS').website).toBeNull();
+    expect(setup.buyingTypes.map((b: any) => [b.value, b.supported])).toEqual([['AUCTION', true], ['RESERVED', false]]);
+    // what Meta cannot do with the panel's inputs is said up front
+    expect((await plan({ ...base(), pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_LEADS', optimize: 'LINK_CLICKS' })).problems).toContain('Leads on a website need a Meta pixel and an event; instant forms need a form. The panel supports Leads with Calls.');
+    expect((await plan({ ...base(), pageId: '501', buyingType: 'RESERVED' })).problems).toContain('Only the Auction buying type is supported. Reserved buying needs a reach and frequency prediction.');
+    expect((await plan({ ...base(), pageId: '501', spendCap: 50 })).problems).toContain('Meta requires a campaign spending limit of at least 100 in the account currency.');
+    // the default is unchanged: Calls under Engagement
+    expect((await plan({ ...base(), pageId: '501' })).goal).toMatchObject({ objective: 'OUTCOME_ENGAGEMENT', optimization_goal: 'QUALITY_CALL', destination_type: 'PHONE_CALL' });
+    // Awareness + video views on a website ad: no destination, Page promoted, spend cap on the campaign
+    const body = { ...base(), name: 'Awareness test', pageId: '501', goal: 'website', link: 'https://x.example/', objective: 'OUTCOME_AWARENESS', optimize: 'THRUPLAY', spendCap: 500, rows: [{ accountRowId: acc['DE 154'] }] };
+    expect((await plan(body)).ready).toBe(true);
+    calls.length = 0;
+    const res = await agent.post('/api/launches').set('Origin', TEST_ORIGIN).set('X-CSRF-Token', csrf).send({ ...body, confirm: true });
+    expect(res.status).toBe(201);
+    await drain();
+    const camp = calls.find((c) => c.method === 'POST' && c.path === 'act_154/campaigns')!.params;
+    expect(camp).toMatchObject({ objective: 'OUTCOME_AWARENESS', buying_type: 'AUCTION', spend_cap: '50000', status: 'PAUSED' });
+    const set = calls.find((c) => c.method === 'POST' && c.path === 'act_154/adsets')!.params;
+    expect(set.optimization_goal).toBe('THRUPLAY');
+    expect(set.destination_type).toBeUndefined();
+    expect(set.promoted_object).toBeUndefined();
+    // Leads with Calls promotes the Page and asks for quality calls
+    const leads = (await plan({ ...base(), pageId: '501', objective: 'OUTCOME_LEADS', optimize: 'QUALITY_CALL' })).goal;
+    expect(leads).toMatchObject({ objective: 'OUTCOME_LEADS', optimization_goal: 'QUALITY_CALL', destination_type: 'PHONE_CALL', promotedPage: true });
+  });
+
   it('falls back when Meta refuses the Advantage+ creative switches, and says so on the row', async () => {
     const { agent, csrf } = await signIn(app, 'boss@example.test', pw);
     rejectCreativeSwitches = true;

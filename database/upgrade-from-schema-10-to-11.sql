@@ -1,10 +1,10 @@
 -- =====================================================================================
--- Ads Command Center 0.8.1 : UPGRADE database from schema version 10 to 11
+-- Ads Command Center 0.9.0 : UPGRADE database from schema version 10 to 11
 --
 -- Use this ONLY on a database that is at schema version 10. To check: open the table
 -- schema_migrations in phpMyAdmin; the highest "version" with status "applied" must be 10.
 --   * Back up first: phpMyAdmin -> Export.
---   * Deploy the 0.8.1 files and restart the app before or right after importing.
+--   * Deploy the 0.9.0 files and restart the app before or right after importing.
 --   * If it stops with "Duplicate column" or "Table already exists", this upgrade (or part of it)
 --     was already applied: restore your backup and use the file for your real version instead.
 --   * You can also skip this file: Settings -> Database -> "Apply pending migrations" does the same.

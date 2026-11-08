@@ -24,6 +24,42 @@ export const GOALS = {
         landing_page_views: { objective: 'OUTCOME_TRAFFIC', destination_type: 'WEBSITE', optimization_goal: 'LANDING_PAGE_VIEWS', label: 'Landing page views' },
     },
 };
+/**
+ * Campaign objective (Meta's ODAX objectives) × where the ad sends people (call or website) → what Meta may
+ * optimise for. Only pairs the panel can build with a video, a Page, a phone number or a website are listed;
+ * Leads and Sales on a website need a pixel and App promotion needs an app, so those say so instead.
+ */
+export const BUYING_TYPES = [{ value: 'AUCTION', label: 'Auction', supported: true }, { value: 'RESERVED', label: 'Reserved (reach and frequency)', supported: false, note: 'Needs a reach and frequency prediction. Not supported by the panel.' }];
+export const OBJECTIVES = {
+    OUTCOME_AWARENESS: {
+        label: 'Awareness',
+        call: { REACH: { label: 'Reach', promotedPage: true }, IMPRESSIONS: { label: 'Impressions', promotedPage: true }, THRUPLAY: { label: 'Video views (ThruPlay)', promotedPage: true } },
+        website: { REACH: { label: 'Reach' }, IMPRESSIONS: { label: 'Impressions' }, THRUPLAY: { label: 'Video views (ThruPlay)' } },
+    },
+    OUTCOME_TRAFFIC: {
+        label: 'Traffic',
+        call: { LINK_CLICKS: { label: 'Clicks on Call', destination_type: 'PHONE_CALL', promotedPage: true } },
+        website: { LINK_CLICKS: { label: 'Link clicks', destination_type: 'WEBSITE' }, LANDING_PAGE_VIEWS: { label: 'Landing page views', destination_type: 'WEBSITE' }, IMPRESSIONS: { label: 'Impressions', destination_type: 'WEBSITE' }, REACH: { label: 'Reach', destination_type: 'WEBSITE' } },
+    },
+    OUTCOME_ENGAGEMENT: {
+        label: 'Engagement',
+        call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } },
+        website: { LINK_CLICKS: { label: 'Link clicks', destination_type: 'WEBSITE' }, THRUPLAY: { label: 'Video views (ThruPlay)', destination_type: 'ON_VIDEO', promotedPage: true }, POST_ENGAGEMENT: { label: 'Post engagement', destination_type: 'ON_POST', promotedPage: true } },
+    },
+    OUTCOME_LEADS: { label: 'Leads', call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Leads on a website need a Meta pixel and an event; instant forms need a form. The panel supports Leads with Calls.' },
+    OUTCOME_SALES: { label: 'Sales', call: { QUALITY_CALL: { label: 'Calls', destination_type: 'PHONE_CALL', promotedPage: true } }, website: null, note: 'Sales on a website need a pixel or catalogue. The panel supports Sales with Calls.' },
+    OUTCOME_APP_PROMOTION: { label: 'App promotion', call: null, website: null, note: 'Needs an app registered with Meta. Not supported by the panel.' },
+};
+/** Older launches saved goal + optimize only; these are the objectives and names they meant. */
+const LEGACY_OPTIMIZE = { calls: 'QUALITY_CALL', clicks: 'LINK_CLICKS', landing_page_views: 'LANDING_PAGE_VIEWS' };
+export function goalSpec(s) {
+    const objective = s.objective ?? (s.goal === 'call' ? 'OUTCOME_ENGAGEMENT' : 'OUTCOME_TRAFFIC');
+    const optimize = LEGACY_OPTIMIZE[s.optimize ?? ''] ?? s.optimize ?? (s.goal === 'call' ? 'QUALITY_CALL' : 'LINK_CLICKS');
+    const spec = OBJECTIVES[objective]?.[s.goal]?.[optimize];
+    if (!spec)
+        return null;
+    return { objective, optimization_goal: optimize, destination_type: spec.destination_type, promotedPage: s.goal === 'call' || Boolean(spec.promotedPage), label: spec.label, objectiveLabel: OBJECTIVES[objective].label };
+}
 /** Placements the user can tick. Fixed placements only: Advantage+ placements are never sent. */
 export const PLACEMENTS = {
     fb_feed: { label: 'Facebook feed', platform: 'facebook', position: 'feed' },
@@ -97,6 +133,11 @@ export const launchInput = z.object({
     name: text(120).min(1, 'Give the launch a name.'),
     goal: z.enum(['call', 'website']),
     optimize: z.string().default('calls'),
+    /** Meta campaign objective. Missing = what the goal implied before 0.9 (calls → Engagement, website → Traffic). */
+    objective: z.enum(Object.keys(OBJECTIVES)).optional(),
+    buyingType: z.enum(['AUCTION', 'RESERVED']).default('AUCTION'),
+    /** Campaign spending limit in the account's currency (major units). Optional. */
+    spendCap: money.optional(),
     /** One Facebook Page for the whole launch. A sheet row can still name another Page for one account. */
     pageId: z.string().regex(/^\d+$/).optional(),
     mediaAssetId: z.number().int().positive().optional(),
@@ -150,10 +191,14 @@ export async function pagesFor(orgId) {
 }
 export async function planLaunch(user, input, accounts) {
     const byId = new Map(accounts.map((a) => [Number(a.id), a]));
-    const goal = GOALS[input.goal]?.[input.optimize];
+    const goal = goalSpec(input);
     const problems = [];
     if (!goal)
-        problems.push('Choose what Meta should optimize for.');
+        problems.push(OBJECTIVES[input.objective ?? '']?.[input.goal] === null ? (OBJECTIVES[input.objective].note ?? 'This objective is not supported with that goal.') : 'Choose what Meta should optimize for.');
+    if (input.buyingType !== 'AUCTION')
+        problems.push('Only the Auction buying type is supported. Reserved buying needs a reach and frequency prediction.');
+    if (input.spendCap != null && input.spendCap > 0 && input.spendCap < 100)
+        problems.push('Meta requires a campaign spending limit of at least 100 in the account currency.');
     if (input.ageMin > input.ageMax)
         problems.push('The minimum age is above the maximum age.');
     if (input.goal === 'website' && !WEBSITE_CTAS.includes(input.cta))
@@ -266,7 +311,7 @@ export async function planLaunch(user, input, accounts) {
     return {
         rows,
         problems,
-        goal: goal ? { ...goal, goal: input.goal, optimize: input.optimize } : null,
+        goal: goal ? { ...goal, goal: input.goal, optimize: goal.optimization_goal } : null,
         ready: problems.length === 0 && rows.length > 0 && rows.every((r) => r.issues.length === 0),
         budgetKind: input.budget.kind,
         days: input.startDate && input.endDate ? Math.round((Date.parse(input.endDate) - Date.parse(input.startDate)) / 86_400_000) : null,
@@ -517,7 +562,9 @@ export function geoLocations(countries, places, types) {
 }
 export function metaPayloads(launch, item, account) {
     const s = launch.settings;
-    const g = GOALS[s.goal][s.optimize];
+    const g = goalSpec(s);
+    if (!g)
+        throw new AppError({ code: 'LAUNCH_GOAL_INVALID', message: 'This launch has an objective the panel cannot build.', status: 400, category: 'validation' });
     const content = typeof item.content === 'string' ? JSON.parse(item.content) : item.content;
     const tag = tagFor(launch.id, item.position);
     const lifetime = (item.budget_kind ?? s.budget?.kind) === 'lifetime';
@@ -563,7 +610,8 @@ export function metaPayloads(launch, item, account) {
         name: `${launch.name} · ${account.name} ${tag}`,
         objective: g.objective,
         status: 'PAUSED',
-        buying_type: 'AUCTION',
+        buying_type: s.buyingType ?? 'AUCTION',
+        ...(s.spendCap ? { spend_cap: majorToMinor(s.spendCap, item.currency) } : {}),
         special_ad_categories: employment ? ['EMPLOYMENT'] : [],
         ...(employment ? { special_ad_category_country: s.countries } : {}),
         // Each ad set keeps its own budget (ABO); Meta asks for this flag on campaigns without a campaign budget.
@@ -582,8 +630,8 @@ export function metaPayloads(launch, item, account) {
         bid_strategy: adv?.bidStrategy ?? 'LOWEST_COST_WITHOUT_CAP',
         ...(adv && adv.bidStrategy !== 'LOWEST_COST_WITHOUT_CAP' && adv.bidAmount ? { bid_amount: majorToMinor(adv.bidAmount, item.currency) } : {}),
         optimization_goal: g.optimization_goal,
-        destination_type: g.destination_type,
-        ...(s.goal === 'call' ? { promoted_object: { page_id: item.page_id } } : {}),
+        ...(g.destination_type ? { destination_type: g.destination_type } : {}),
+        ...(g.promotedPage ? { promoted_object: { page_id: item.page_id } } : {}),
         targeting,
         ...(reachesEu ? { dsa_beneficiary: s.paidBy, dsa_payor: s.paidBy } : {}),
     };

@@ -15,7 +15,8 @@ Facebook Login for Business → Configurations → Create.
 
 - Login variation: **General**
 - Access token: **User access token**
-- Permissions: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`
+- Permissions: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`,
+  and since 0.8.0 for the Comments page: `pages_read_user_content`, `pages_manage_engagement`
 
 Save it and copy the **Configuration ID** into `META_CONFIG_ID`.
 
@@ -60,6 +61,22 @@ listed in the **configuration**, not what the panel asks for, so:
 
 Since 0.3.3 the panel still imports your ad accounts and Pages without this permission (only business names are missing)
 and shows which permissions are missing next to the Meta login.
+
+## "Missing permissions: pages_read_user_content, pages_manage_engagement"
+
+Shown after Connect Meta since 0.8.0. Everything else keeps working; only the **Comments** page needs these two.
+
+1. developers.facebook.com → your app → **Use cases** → the use case that holds Facebook Login for Business
+   (or **App Review → Permissions and Features**) → search `pages_read_user_content` → **Add**; same for
+   `pages_manage_engagement`. In development mode they work at once for people with a role on the app.
+2. **Facebook Login for Business → Configurations** → open the configuration whose ID is in `META_CONFIG_ID` → **Edit**
+   → under Permissions tick both → **Save**. The ID does not change.
+3. facebook.com → Settings & privacy → Settings → **Business integrations** → remove the app, so Meta asks again.
+4. In the panel: Ad Accounts → **Connect Meta** → approve everything, including the Pages.
+
+If the app is **Live** (not development), these two permissions need Advanced Access through App Review before
+anyone can grant them. Until then keep the app in development mode with your team as app admins or testers,
+or leave Comments unused: nothing else depends on it.
 
 ## App review and access level
 
